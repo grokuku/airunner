@@ -142,8 +142,8 @@ class RunManager:
     ) -> ServerState:
         """Démarre llama-server avec le modèle chargé.
 
-        Si un serveur tourne déjà avec le même modèle, il est réutilisé.
-        Si un serveur tourne avec un autre modèle, il est arrêté d'abord.
+        Si le chargement échoue avec des flags multi-GPU (split_mode/tensor_split),
+        réessaie automatiquement sans ces flags avec un ngl réduit.
         """
         # Si le serveur tourne déjà avec le même modèle, réutiliser
         if (self.server and self.server.status == RunStatus.RUNNING
@@ -154,6 +154,40 @@ class RunManager:
         if self.server and self.server.status in (RunStatus.RUNNING, RunStatus.LOADING):
             await self.stop()
 
+        # Tentative initiale
+        state = await self._try_start(model_id, model_path, params)
+
+        # Si échec à cause de flags multi-GPU, réessayer sans
+        if state.status == RunStatus.ERROR:
+            if params.get("split_mode") and params.get("split_mode") != "none":
+                err_msg = state.error_message
+                logger.warning(f"Échec avec multi-GPU, tentative sans split: {err_msg[:100]}")
+                fallback = {k: v for k, v in params.items() if k not in ("split_mode", "tensor_split", "main_gpu")}
+                fallback["no_kv_offload"] = False
+                # Essayer avec ngl réduit progressivement (ngl//2, ngl//4, CPU)
+                ngl_vals = [
+                    max(1, (params.get("ngl", 99) or 99) // 2),
+                    max(1, (params.get("ngl", 99) or 99) // 4),
+                    0,  # CPU only en dernier recours
+                ]
+                for ngl_val in ngl_vals:
+                    if ngl_val == (params.get("ngl", 99) or 99):
+                        continue  # éviter de tester la même valeur
+                    fallback["ngl"] = ngl_val
+                    await asyncio.sleep(1)
+                    state = await self._try_start(model_id, model_path, fallback)
+                    if state.status != RunStatus.ERROR:
+                        break
+
+        return state
+
+    async def _try_start(
+        self,
+        model_id: str,
+        model_path: str,
+        params: dict,
+    ) -> ServerState:
+        """Tente de démarrer llama-server avec les paramètres donnés."""
         binary = self._find_binary()
         if not binary:
             state = ServerState(model_id, model_path, params)
