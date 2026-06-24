@@ -42,6 +42,22 @@ async function renderBenchmark() {
               <option value="65536">65 536</option>
             </select>
           </div>
+          <div>
+            <label class="text-xs text-gray-400 mb-1 block">Cache KV</label>
+            <select id="benchmarkCacheType" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+              <option value="auto">🔄 Auto (teste les 2)</option>
+              <option value="q8_0">📌 Q8 (meilleure qualité)</option>
+              <option value="q4_0">📌 Q4 (moins de VRAM)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400 mb-1 block">Flash Attn</label>
+            <select id="benchmarkFlashAttn" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+              <option value="auto">🔄 Auto (teste on/off)</option>
+              <option value="on">📌 On</option>
+              <option value="off">📌 Off</option>
+            </select>
+          </div>
           <div class="pt-5">
             <button id="benchmarkStartBtn" onclick="startBenchmark()"
                     class="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-dark-600 disabled:cursor-not-allowed rounded-lg font-semibold transition text-sm"
@@ -86,7 +102,9 @@ async function renderBenchmark() {
                 <tr class="text-gray-400 border-b border-dark-600">
                   <th class="text-left py-2 px-2">Configuration</th>
                   <th class="text-right py-2 px-2">⚡ tok/s</th>
-                  <th class="text-right py-2 px-2">🎮 VRAM</th>
+                  <th class="text-right py-2 px-2" title="VRAM mesurée">🎮 VRAM réel</th>
+                  <th class="text-right py-2 px-2" title="VRAM estimée par le moteur de règles">📐 VRAM estimé</th>
+                  <th class="text-right py-2 px-2">🎯 Écart</th>
                   <th class="text-right py-2 px-2">🧠 RAM</th>
                   <th class="text-right py-2 px-2">⭐ Score</th>
                   <th class="text-left py-2 px-2"></th>
@@ -118,6 +136,8 @@ async function startBenchmark() {
   const modelId = document.getElementById('benchmarkModel').value;
   const priority = document.getElementById('benchmarkPriority').value;
   const ctxSize = document.getElementById('benchmarkCtxSize').value;
+  const cacheType = document.getElementById('benchmarkCacheType').value;
+  const flashAttn = document.getElementById('benchmarkFlashAttn').value;
   if (!modelId) return flash('❌ Sélectionnez un modèle');
 
   _benchmarkRunning = true;
@@ -130,7 +150,7 @@ async function startBenchmark() {
   document.getElementById('benchmarkSaveBtn').classList.add('hidden');
   document.getElementById('benchmarkResultsBody').innerHTML = '';
 
-  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}`;
+  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}`;
 
   try {
     const resp = await fetch(url, { method: 'POST' });
@@ -216,9 +236,19 @@ function addBenchmarkResult(event) {
 
   const tok_s = event.tok_s || 0;
   const vram = event.vram_gb || 0;
+  const estimate = event.estimate_vram_gb || 0;
+  const diff = event.diff_pct || 0;
   const ram = event.ram_gb || 0;
   const score = event.score || 0;
   const hasError = !!event.error;
+
+  // Formater l'écart estimé vs réel
+  let diffText = '—';
+  let diffClass = 'text-gray-500';
+  if (estimate > 0 && vram > 0) {
+    diffText = (diff > 0 ? '+' : '') + diff + '%';
+    diffClass = diff > 20 ? 'text-red-400' : diff > 5 ? 'text-yellow-400' : 'text-green-400';
+  }
 
   const row = document.createElement('tr');
   row.className = 'border-b border-dark-700/50';
@@ -231,6 +261,8 @@ function addBenchmarkResult(event) {
     </td>
     <td class="text-right py-2 px-2 font-mono ${tok_s > 0 ? 'text-green-300' : 'text-gray-500'}">${tok_s > 0 ? tok_s : '—'}</td>
     <td class="text-right py-2 px-2 font-mono">${vram > 0 ? vram.toFixed(1) + 'G' : '—'}</td>
+    <td class="text-right py-2 px-2 font-mono text-gray-400">${estimate > 0 ? estimate.toFixed(1) + 'G' : '—'}</td>
+    <td class="text-right py-2 px-2 font-mono ${diffClass}">${diffText}</td>
     <td class="text-right py-2 px-2 font-mono">${ram > 0 ? ram.toFixed(1) + 'G' : '—'}</td>
     <td class="text-right py-2 px-2 font-mono ${score > 80 ? 'text-green-300' : score > 50 ? 'text-yellow-300' : 'text-gray-400'}">${score > 0 ? score : '—'}</td>
     <td class="py-2 px-2">${hasError ? `<span class="text-xs text-red-500">${event.error?.slice(0, 40)}</span>` : ''}</td>

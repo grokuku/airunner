@@ -30,6 +30,8 @@ async def benchmark_auto(
     model_id: str = Query(..., description="ID du modèle à tester"),
     priority: str = Query("speed", description="Critère : 'speed' ou 'quality'"),
     ctx_size: int = Query(8192, description="Taille du contexte (KV cache)"),
+    cache_type: str = Query("auto", description="Cache KV : 'auto', 'q8_0' ou 'q4_0'"),
+    flash_attn: str = Query("auto", description="Flash attention : 'auto', 'on' ou 'off'"),
 ):
     """Lance un benchmark automatique pour un modèle.
 
@@ -72,7 +74,13 @@ async def benchmark_auto(
         results = []
         best = {}
 
-        async for event in run_benchmark(model_id, model_meta, system, priority, ctx_size=ctx_size):
+        async for event in run_benchmark(
+            model_id, model_meta, system,
+            priority=priority,
+            ctx_size=ctx_size,
+            fixed_cache_type=cache_type if cache_type != "auto" else None,
+            fixed_flash_attn={"on": True, "off": False}.get(flash_attn) if flash_attn != "auto" else None,
+        ):
             yield f"data: {json.dumps(event)}\n\n"
 
             # Collecter pour le cache GET

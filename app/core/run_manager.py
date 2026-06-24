@@ -212,6 +212,7 @@ class RunManager:
                 cmd.extend(["--main-gpu", str(mg)])
 
         logger.info(f"Démarrage llama-server: {' '.join(cmd[:6])}...")
+        logger.debug(f"Commande complète: {' '.join(cmd)}")
 
         try:
             state.process = await asyncio.create_subprocess_exec(

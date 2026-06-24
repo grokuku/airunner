@@ -272,7 +272,7 @@ def suggest(
 
         total_needed = model_gb + kv_gb + VRAM_OVERHEAD_GB
 
-        if gpu and total_needed <= vram_free * 0.85:
+        if gpu and total_needed <= vram_free_best_gpu * 0.85:
             quants_viable.append(q_name)
 
     # Si aucun quant viable en full GPU, on prend Q4_K_M avec offloading
@@ -292,9 +292,11 @@ def suggest(
             best_quant = quants_viable[0]
 
     # ── Étape 2 : Calculer VRAM / RAM ──
-
-    best_bits = _get_bits_from_quant(best_quant)
-    model_gb_final = estimate_model_size(total_params_b, best_bits)
+    # Utiliser la TAILLE RÉELLE du fichier pour les calculs,
+    # pas une estimation théorique basée sur le quant.
+    model_gb_final = model_meta.file_size_gb or estimate_model_size(total_params_b, _get_bits_from_quant(best_quant))
+    # best_bits dérivé de la taille réelle (bits réels par poids dans ce fichier)
+    best_bits = (model_gb_final * 8) / total_params_b if total_params_b > 0 and model_gb_final > 0 else _get_bits_from_quant(best_quant)
     kv_gb = estimate_kv_cache_gb(ctx_size, hidden_size, n_layers, 1.0)
 
     # ── Étape 3 : Déterminer la stratégie ──
