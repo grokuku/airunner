@@ -157,27 +157,29 @@ class RunManager:
         # Tentative initiale
         state = await self._try_start(model_id, model_path, params)
 
-        # Si échec à cause de flags multi-GPU, réessayer sans
+        # Si échec (souvent OOM ou conflit tensoriel avec split multi-GPU),
+        # réessayer en laissant llama-server gérer la distribution automatiquement
         if state.status == RunStatus.ERROR:
-            if params.get("split_mode") and params.get("split_mode") != "none":
-                err_msg = state.error_message
-                logger.warning(f"Échec avec multi-GPU, tentative sans split: {err_msg[:100]}")
-                fallback = {k: v for k, v in params.items() if k not in ("split_mode", "tensor_split", "main_gpu", "override_tensor")}
-                fallback["no_kv_offload"] = False
-                # Essayer avec ngl réduit progressivement (ngl//2, ngl//4, CPU)
-                ngl_vals = [
-                    max(1, (params.get("ngl", 99) or 99) // 2),
-                    max(1, (params.get("ngl", 99) or 99) // 4),
-                    0,  # CPU only en dernier recours
-                ]
-                for ngl_val in ngl_vals:
-                    if ngl_val == (params.get("ngl", 99) or 99):
-                        continue  # éviter de tester la même valeur
-                    fallback["ngl"] = ngl_val
-                    await asyncio.sleep(1)
-                    state = await self._try_start(model_id, model_path, fallback)
-                    if state.status != RunStatus.ERROR:
-                        break
+            err_msg = state.error_message
+            logger.warning(f"Échec, tentative sans split manuel: {err_msg[:100]}")
+
+            # Retirer les flags multi-GPU qui peuvent causer des conflits
+            # avec les tenseurs internes du modèle (ex: fused Gated Delta Net)
+            fallback = {k: v for k, v in params.items()
+                        if k not in ("split_mode", "tensor_split", "main_gpu", "override_tensor")}
+            fallback["ngl"] = 99  # toutes les couches, laissera llama-server répartir
+            fallback["no_kv_offload"] = False
+
+            await asyncio.sleep(1)
+            state = await self._try_start(model_id, model_path, fallback)
+
+            # Si toujours en échec, tenter sans warmup (parfois le warmup échoue)
+            if state.status == RunStatus.ERROR:
+                logger.warning(f"Échec, tentative sans warmup: {err_msg[:100]}")
+                fallback2 = {**fallback}
+                fallback2["no_warmup"] = True
+                await asyncio.sleep(1)
+                state = await self._try_start(model_id, model_path, fallback2)
 
         return state
 
@@ -244,6 +246,10 @@ class RunManager:
             mg = params.get("main_gpu")
             if mg is not None and mg != 0:
                 cmd.extend(["--main-gpu", str(mg)])
+
+        # Pas de warmup (utile en fallback quand le warmup échoue)
+        if params.get("no_warmup"):
+            cmd.append("--no-warmup")
 
         logger.info(f"Démarrage llama-server: {' '.join(cmd[:6])}...")
         logger.debug(f"Commande complète: {' '.join(cmd)}")
