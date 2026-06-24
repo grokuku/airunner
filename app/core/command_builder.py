@@ -66,7 +66,7 @@ def build_command(
 
     # Flash attention
     if params.get("flash_attn"):
-        parts.append("  --flash-attn=on")
+        parts.append("  --flash-attn on")
 
     # No KV offload
     if params.get("no_kv_offload"):
@@ -145,7 +145,7 @@ def build_chat_command(
         parts.append(f"  --batch-size {batch}")
 
     if params.get("flash_attn"):
-        parts.append("  --flash-attn=on")
+        parts.append("  --flash-attn on")
 
     if params.get("no_kv_offload"):
         parts.append("  --no-kv-offload")

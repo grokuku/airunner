@@ -1035,7 +1035,7 @@ Bugs corrigés lors de la revue :
 1. **v1_comfy.py** : `rm.current_run` inexistant — `RunManager` utilise `self.server`, pas `self.current_run`. Les 3 endpoints ComfyUI lèvent `AttributeError` à l'exécution.
 
 **🟧 Moyen**
-2. **run_manager.py** : `--flash-attn` passé avec `"on"` en argument séparé (`cmd.append("--flash-attn")` + `cmd.append("on")`) mais `command_builder.py` passe `--flash-attn` sans valeur. Incohérence : si llama.cpp définit `--flash-attn` en `store_true`, l'argument `on` sera interprété comme une position inconnue → crash potentiel. La doc officielle confirme que la syntaxe correcte est `--flash-attn [on|off|auto]` (une seule chaîne).
+2. **run_manager.py** : `--flash-attn` passé avec `"on"` en argument séparé mais `command_builder.py` passe `--flash-attn` sans valeur. Incohérence. ✅ Corrigé : les deux utilisent `["--flash-attn", "on"]`. (Note : `--flash-attn=on` est refusé par llama.cpp — ne pas utiliser la forme avec `=`.)
 3. **ModelMeta.loaded** : le champ `loaded: bool = False` n'est JAMAIS mis à `True` nulle part dans le code, rendant inutilisable tout code qui s'appuierait sur ce flag.
 
 **🟡 Bas**
@@ -1167,8 +1167,9 @@ ai-runner/
 | `-fa, --flash-attn` | Activation de Flash Attention | `auto` | `on`, `off`, `auto` |
 
 > **Note importante** : `--flash-attn` prend une valeur (`on`, `off`, ou `auto`).
-> Syntaxe correcte : `--flash-attn on` (une seule option avec sa valeur).
-> Ne pas passer `--flash-attn` et `on` comme deux arguments séparés !
+> Syntaxe shell : `--flash-attn on` (espace, le shell sépare en 2 arguments).
+> Syntaxe subprocess : `["--flash-attn", "on"]` (2 éléments de liste).
+> Ne PAS utiliser la forme avec `=` : `--flash-attn=on` est refusé par llama.cpp.
 
 ### 10.4. Performance CPU
 

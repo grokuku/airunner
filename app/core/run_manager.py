@@ -190,9 +190,11 @@ class RunManager:
         if params.get("flash_attn"):
             val = params["flash_attn"]
             if val is True:
-                cmd.append("--flash-attn=on")
+                cmd.append("--flash-attn")
+                cmd.append("on")
             else:
-                cmd.append(f"--flash-attn={val}")
+                cmd.append("--flash-attn")
+                cmd.append(str(val))
 
         # Override tensor pour MoE
         for ot in params.get("override_tensor", []):
