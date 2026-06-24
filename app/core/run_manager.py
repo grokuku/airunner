@@ -162,7 +162,7 @@ class RunManager:
             if params.get("split_mode") and params.get("split_mode") != "none":
                 err_msg = state.error_message
                 logger.warning(f"Échec avec multi-GPU, tentative sans split: {err_msg[:100]}")
-                fallback = {k: v for k, v in params.items() if k not in ("split_mode", "tensor_split", "main_gpu")}
+                fallback = {k: v for k, v in params.items() if k not in ("split_mode", "tensor_split", "main_gpu", "override_tensor")}
                 fallback["no_kv_offload"] = False
                 # Essayer avec ngl réduit progressivement (ngl//2, ngl//4, CPU)
                 ngl_vals = [
