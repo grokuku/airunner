@@ -171,13 +171,14 @@ def generate_config_grid(
                 label=f"{label_base} • {label_ct} • no flash",
             ))
 
-    # ── Offloading partiel (moitié des couches) ──
-    # Testé uniquement avec le premier type de cache (généralement le plus pertinent)
+    # ── Offloading progressif (single GPU, ngl croissant) ──
     ct = cache_types[0]
-    configs.append(make_config(
-        ngl=half_layers, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
-        label=f"Offload {half_layers}/{n_layers}",
-    ))
+    for ratio, label_suffix in [(0.25, "¼ GPU"), (0.5, "½ GPU"), (0.75, "¾ GPU"), (1.0, "Tout GPU")]:
+        ngl_val = max(1, int(n_layers * ratio))
+        configs.append(make_config(
+            ngl=ngl_val, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
+            label=f"Offload {ngl_val}/{n_layers} ({label_suffix})",
+        ))
 
     # ── Multi-GPU intelligent ──
     if multi_gpu:

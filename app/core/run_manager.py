@@ -167,19 +167,32 @@ class RunManager:
             # avec les tenseurs internes du modèle (ex: fused Gated Delta Net)
             fallback = {k: v for k, v in params.items()
                         if k not in ("split_mode", "tensor_split", "main_gpu", "override_tensor")}
-            fallback["ngl"] = 99  # toutes les couches, laissera llama-server répartir
             fallback["no_kv_offload"] = False
+
+            # Estimer le nombre de couches qui tiennent sur LE MEILLEUR GPU seul
+            # (sans tensor-split, toutes les couches GPU vont sur GPU 0)
+            vram_guess = 7.0  # ~7 Go utilisables par GPU après overhead CUDA
+            model_gb_guess = 30.0  # estimation conservative
+            n_layers_guess = 64  # valeur typique pour un 27-31B
+            layer_gb = model_gb_guess / n_layers_guess
+            ngl_safe = max(1, int(vram_guess / layer_gb))
+            fallback["ngl"] = ngl_safe
 
             await asyncio.sleep(1)
             state = await self._try_start(model_id, model_path, fallback)
 
-            # Si toujours en échec, tenter sans warmup (parfois le warmup échoue)
+            # Si toujours en échec, tenter avec ngl/2
             if state.status == RunStatus.ERROR:
-                logger.warning(f"Échec, tentative sans warmup: {err_msg[:100]}")
-                fallback2 = {**fallback}
-                fallback2["no_warmup"] = True
+                fallback["ngl"] = max(1, ngl_safe // 2)
                 await asyncio.sleep(1)
-                state = await self._try_start(model_id, model_path, fallback2)
+                state = await self._try_start(model_id, model_path, fallback)
+
+            # Dernier recours : CPU only (ngl=0)
+            if state.status == RunStatus.ERROR:
+                logger.warning(f"Échec, fallback CPU only")
+                fallback["ngl"] = 0
+                await asyncio.sleep(1)
+                state = await self._try_start(model_id, model_path, fallback)
 
         return state
 
