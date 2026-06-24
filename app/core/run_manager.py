@@ -86,17 +86,6 @@ class ServerState:
         )
 
 
-def _find_llama_server() -> Optional[str]:
-    """Trouve le binaire llama-server."""
-    binary_path = Path(app_config.config.llamacpp.binary_path)
-    parent = binary_path.parent
-    server_bin = parent / "llama-server"
-    if server_bin.is_file() and os.access(server_bin, 0o755):
-        return str(server_bin)
-    which = __import__("shutil").which("llama-server")
-    return which
-
-
 async def _get_resource_usage() -> tuple[float, float]:
     """Retourne (VRAM_utilisée_Go, RAM_utilisée_Go)."""
     vram = 0.0
@@ -199,12 +188,26 @@ class RunManager:
         cmd.extend(["--threads", str(threads)])
 
         if params.get("flash_attn"):
-            cmd.append("--flash-attn")
-            cmd.append("on")
+            val = params["flash_attn"]
+            if val is True:
+                cmd.append("--flash-attn=on")
+            else:
+                cmd.append(f"--flash-attn={val}")
 
         # Override tensor pour MoE
         for ot in params.get("override_tensor", []):
             cmd.extend(["--override-tensor", ot])
+
+        # Multi-GPU : split mode, tensor split, main GPU
+        split_mode = params.get("split_mode")
+        if split_mode and split_mode != "none":
+            cmd.extend(["--split-mode", split_mode])
+            ts = params.get("tensor_split")
+            if ts:
+                cmd.extend(["--tensor-split", ts])
+            mg = params.get("main_gpu")
+            if mg is not None and mg != 0:
+                cmd.extend(["--main-gpu", str(mg)])
 
         logger.info(f"Démarrage llama-server: {' '.join(cmd[:6])}...")
 
@@ -219,6 +222,9 @@ class RunManager:
 
             # Attendre que llama-server soit prêt (poll health endpoint)
             await self._wait_for_server_ready(state)
+
+            # Sauvegarder dans l'historique SQLite
+            await save_run(state)
 
             # Lancer le monitoring en arrière-plan
             self._monitor_task = asyncio.create_task(self._monitor(state))
@@ -356,6 +362,9 @@ class RunManager:
         state.status = RunStatus.STOPPED
         state.ended_at = datetime.now()
 
+        # Sauvegarder dans l'historique SQLite
+        await save_run(state)
+
     async def _monitor(self, state: ServerState) -> None:
         """Surveille le serveur et les ressources."""
         while state.status == RunStatus.RUNNING:
@@ -371,6 +380,14 @@ class RunManager:
         """Vérifie si le serveur tourne."""
         return (self.server is not None
                 and self.server.status == RunStatus.RUNNING)
+
+    def get_loaded_model_id(self) -> Optional[str]:
+        """Retourne l'ID du modèle actuellement chargé, ou None."""
+        if self.server and self.server.status in (
+            RunStatus.RUNNING, RunStatus.LOADING
+        ):
+            return self.server.model_id
+        return None
 
 
 # ─── Persistance SQLite ─────────────────────────────

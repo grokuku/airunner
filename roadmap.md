@@ -34,7 +34,18 @@
    - [Phase 8 : Améliorations et polish](#phase-8--améliorations-et-polish)
 8. [Statut actuel](#8-statut-actuel)
 9. [Décisions clés](#9-décisions-clés)
-10. [Contributeurs et décisions clés](#10-contributeurs-et-décisions-clés)
+10. [Référence des paramètres llama.cpp](#10-référence-des-paramètres-llamacpp)
+    - [10.1. Paramètres essentiels](#101-paramètres-essentiels)
+    - [10.2. GPU et accélération matérielle](#102-gpu-et-accélération-matérielle)
+    - [10.3. Cache KV](#103-cache-kv)
+    - [10.4. Performance CPU](#104-performance-cpu)
+    - [10.5. Sampling et contrôle créatif](#105-sampling-et-contrôle-créatif)
+    - [10.6. Échantillonnage avancé](#106-échantillonnage-avancé)
+    - [10.7. Mode serveur (llama-server)](#107-mode-serveur-llama-server)
+    - [10.8. Paramètres utilisés par AI Runner vs disponibles](#108-paramètres-utilisés-par-ai-runner-vs-disponibles)
+    - [10.9. Liste complète des quants GGUF](#109-liste-complète-des-quants-gguf)
+    - [10.10. Variables d'environnement](#1010-variables-denvironnement)
+11. [Références](#11-références)
 
 ---
 
@@ -961,6 +972,13 @@ Reportée à un projet séparé. Les endpoints API `/api/v1/comfyui/*` sont déj
 | 8.13 | Benchmark : comparaison de quants | Moyenne | ⏳ |
 | 8.14 | Benchmark : auto-optimisation | Basse | ⏳ |
 | 8.15 | Auth (Bearer token) | Moyenne | ⏳ (structure prête) |
+| 8.16 | **BUG: rm.current_run** — corriger v1_comfy.py (remplacer par rm.server) | **Critique** | 🐛 Découvert |
+| 8.17 | **BUG: --flash-attn on** — uniformiser la syntaxe entre run_manager et command_builder | Haute | 🐛 Découvert |
+| 8.18 | **BUG: ModelMeta.loaded** — implémenter le suivi d'état de chargement | Moyenne | 🐛 Découvert |
+| 8.19 | **Code mort** — supprimer `_find_llama_server()` inutilisé | Basse | 🗑️ Découvert |
+| 8.20 | **Historique** — appeler `save_run()` dans le cycle de vie du RunManager | Haute | 🐛 Découvert |
+| 8.21 | Tests manquants — ajouter tests pour run_manager, command_builder, HF client, API | Haute | ⚠️ Découvert |
+| 8.22 | 
 
 ---
 
@@ -1010,6 +1028,21 @@ Bugs corrigés lors de la revue :
 3. **command_builder.py** : `llama-cli` était hardcoded au lieu d'utiliser `config.llamacpp.binary_path` → corrigé
 4. **huggingface_client.py** : docstring mentionnait "50 Ko" mais le Range demande 20 Mo → corrigé
 5. **rules_engine.py** : imports `CPUInfo`, `RAMInfo` inutilisés → nettoyé
+
+### Bugs découverts (analyse du 24/06/2026)
+
+**🟥 Critique**
+1. **v1_comfy.py** : `rm.current_run` inexistant — `RunManager` utilise `self.server`, pas `self.current_run`. Les 3 endpoints ComfyUI lèvent `AttributeError` à l'exécution.
+
+**🟧 Moyen**
+2. **run_manager.py** : `--flash-attn` passé avec `"on"` en argument séparé (`cmd.append("--flash-attn")` + `cmd.append("on")`) mais `command_builder.py` passe `--flash-attn` sans valeur. Incohérence : si llama.cpp définit `--flash-attn` en `store_true`, l'argument `on` sera interprété comme une position inconnue → crash potentiel. La doc officielle confirme que la syntaxe correcte est `--flash-attn [on|off|auto]` (une seule chaîne).
+3. **ModelMeta.loaded** : le champ `loaded: bool = False` n'est JAMAIS mis à `True` nulle part dans le code, rendant inutilisable tout code qui s'appuierait sur ce flag.
+
+**🟡 Bas**
+4. **run_manager.py** : `_find_llama_server()` (module-level, lignes 89-97) n'est jamais appelée. La recherche du binaire passe uniquement par `RunManager._find_binary()`. À supprimer ou à mettre en sync.
+5. **run_manager.py** : `save_run()` n'est jamais appelé nulle part. L'historique SQLite n'est donc jamais persisté.
+6. **v1_chat.py** : `_find_model_file()` peut crasher sur `PermissionError` dans `os.listdir()`.
+7. **Aucun test** pour `run_manager.py`, `command_builder.py`, `huggingface_client.py`, `config.py`, ni les modules API.
 
 ### Fichiers du projet
 
@@ -1093,10 +1126,233 @@ ai-runner/
 
 ---
 
-## 10. Références
+## 10. Référence des paramètres llama.cpp
+
+> Documentation officielle compilée depuis [llama-cli help](https://github.com/ggml-org/llama.cpp/discussions/15709)
+> et [llama-server README](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+> (version ~b9765, juin 2026)
+
+### 10.1. Paramètres essentiels
+
+| Paramètre | Description | Défaut | Exemple |
+|-----------|-------------|--------|---------|
+| `-m, --model` | Chemin vers le fichier GGUF | — | `-m models/qwen.gguf` |
+| `-p, --prompt` | Prompt initial | — | `-p "Bonjour"` |
+| `-n, --predict, --n-predict` | Nb de tokens à générer (-1 = infini) | `-1` | `-n 512` |
+| `-c, --ctx-size` | Taille du contexte (fenêtre) | `0` (depuis le modèle) | `-c 8192` |
+| `-sys, --system-prompt` | Message système pour le chat | — | `-sys "Sois utile"` |
+
+### 10.2. GPU et accélération matérielle
+
+| Paramètre | Description | Défaut | Notes |
+|-----------|-------------|--------|-------|
+| `-ngl, --gpu-layers, --n-gpu-layers N` | Couches à offloader sur GPU | `auto` | `all` = tout, `99` = tout, `auto` = ajustement automatique |
+| `-sm, --split-mode {none,layer,row,tensor}` | Mode de split multi-GPU | `layer` | `layer` = pipeline, `row` = parallèle, `tensor` = expérimental |
+| `-ts, --tensor-split N0,N1,N2,...` | Proportion à offloader par GPU | — | `-ts 3,1` = 75%/25% |
+| `-mg, --main-gpu INDEX` | GPU principal (index) | `0` | — |
+| `-dev, --device <dev1,dev2,..>` | Liste des devices pour offloading | — | `-dev cuda0,cuda1` |
+| `-ot, --override-tensor` | Override buffer type par pattern de nom | — | `-ot ".*attn.*=CUDA0"` |
+| `-cmoe, --cpu-moe` | Garder tous les poids MoE sur CPU | — | Utile pour gros modèles MoE |
+| `-ncmoe, --n-cpu-moe N` | Garder les experts MoE des N premières couches sur CPU | — | Alternatif à `-ot` |
+| `-kvo, --no-kv-offload` | Désactiver l'offloading du cache KV | activé | Recommandé pour MoE offload |
+| `--list-devices` | Lister les devices disponibles | — | — |
+| `--check-tensors` | Vérifier les valeurs invalides dans les tenseurs | `false` | Utile pour debug |
+
+### 10.3. Cache KV
+
+| Paramètre | Description | Défaut | Valeurs |
+|-----------|-------------|--------|---------|
+| `-ctk, --cache-type-k` | Type de données pour le cache K | `f16` | `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1` |
+| `-ctv, --cache-type-v` | Type de données pour le cache V | `f16` | Mêmes valeurs |
+| `-fa, --flash-attn` | Activation de Flash Attention | `auto` | `on`, `off`, `auto` |
+
+> **Note importante** : `--flash-attn` prend une valeur (`on`, `off`, ou `auto`).
+> Syntaxe correcte : `--flash-attn on` (une seule option avec sa valeur).
+> Ne pas passer `--flash-attn` et `on` comme deux arguments séparés !
+
+### 10.4. Performance CPU
+
+| Paramètre | Description | Défaut |
+|-----------|-------------|--------|
+| `-t, --threads N` | Threads CPU pour la génération | `-1` (auto) |
+| `-tb, --threads-batch N` | Threads CPU pour le batch/prompt | Même que `--threads` |
+| `-C, --cpu-mask` | CPU affinity mask (hex) | `""` |
+| `-Cr, --cpu-range lo-hi` | Plage de CPU pour l'affinité | — |
+| `--prio N` | Priorité process/thread | `0` |
+| `--numa TYPE` | Optimisations NUMA | — | `distribute`, `isolate`, `numactl` |
+| `--mlock` | Forcer le modèle en RAM (évite swap) | — | Utile pour CPU only |
+| `--no-mmap` | Désactiver le memory-mapping | — | Charge plus lentement mais évite les pageouts |
+
+### 10.5. Sampling et contrôle créatif
+
+| Paramètre | Description | Défaut | Range recommandé |
+|-----------|-------------|--------|------------------|
+| `--temp, --temperature` | Température (créativité) | `0.80` | `0.1` (factuel) — `1.2` (créatif) |
+| `-s, --seed` | Graine aléatoire | `-1` (aléatoire) | Tout entier |
+| `--top-k N` | Top-K sampling | `40` | `1`-`100` |
+| `--top-p N` | Top-P (nucleus) sampling | `0.95` | `0.0`-`1.0` |
+| `--min-p N` | Min-P sampling | `0.05` | `0.0`-`1.0` (0 = désactivé) |
+| `--typical-p N` | Locally typical sampling | `1.00` | `0.0`-`1.0` |
+| `--repeat-penalty N` | Pénalité de répétition | `1.00` | `1.0` = désactivé |
+| `--repeat-last-n N` | Tokens considérés pour pénalité | `64` | `0` = désactivé, `-1` = ctx_size |
+| `--presence-penalty N` | Pénalité de présence | `0.00` | `0.0` = désactivé |
+| `--frequency-penalty N` | Pénalité de fréquence | `0.00` | `0.0` = désactivé |
+| `--dynatemp-range N` | Plage de température dynamique | `0.00` | `0.0` = désactivé |
+| `--mirostat N` | Mode Mirostat (0/1/2) | `0` | `0` = désactivé |
+| `--mirostat-lr N` | Learning rate Mirostat | `0.10` | — |
+| `--mirostat-ent N` | Entropie cible Mirostat | `5.00` | — |
+| `--samplers` | Samplers utilisés (ordre, séparés par `;`) | `penalties;dry;top_n_sigma;top_k;typ_p;top_p;min_p;xtc;temperature` | — |
+
+### 10.6. Échantillonnage avancé
+
+| Paramètre | Description | Défaut |
+|-----------|-------------|--------|
+| `--dry-multiplier N` | Force du DRY (Don't Repeat Yourself) sampling | `0.00` (désactivé) |
+| `--dry-base N` | Base DRY | `1.75` |
+| `--dry-allowed-length N` | Longueur de répétition autorisée DRY | `2` |
+| `--dry-penalty-last-n N` | Pénalité DRY sur les N derniers tokens | `-1` (ctx_size) |
+| `--dry-sequence-breaker STRING` | Breakurs de séquence DRY (remplace défauts) | `\n`, `:`, `"`, `*` |
+| `--xtc-probability N` | Probabilité XTC | `0.00` (désactivé) |
+| `--xtc-threshold N` | Seuil XTC | `0.10` |
+| `-l, --logit-bias TOKEN_ID(+/-)BIAS` | Modifier la probabilité d'un token | — |
+| `-j, --json-schema SCHEMA` | Contrainte de génération JSON Schema | — |
+| `--grammar GRAMMAR` | Contrainte BNF grammar | — |
+
+### 10.7. Mode serveur (llama-server)
+
+Paramètres spécifiques à `llama-server` (utilisé par AI Runner en mode proxy) :
+
+| Paramètre | Description | Défaut |
+|-----------|-------------|--------|
+| `--host HOST` | Adresse d'écoute | `127.0.0.1` |
+| `--port PORT` | Port d'écoute | `8080` |
+| `-np, --parallel N` | Nombre de slots serveur | `-1` (auto) |
+| `-cb, --no-cont-batching` | Désactiver le continuous batching | activé |
+| `--api-key KEY` | Clé API pour authentification | — |
+| `--embedding, --embeddings` | Mode embedding uniquement | désactivé |
+| `--metrics` | Endpoint Prometheus `/metrics` | désactivé |
+| `--slots` | Endpoint `/slots` monitoring | activé |
+| `-to, --timeout N` | Timeout read/write (secondes) | `3600` |
+| `--sse-ping-interval N` | Intervalle ping SSE | `30` |
+| `--jinja, --no-jinja` | Template Jinja pour le chat | activé |
+| `--chat-template STRING` | Template Jinja personnalisé | depuis le modèle |
+| `--reasoning-format FORMAT` | Format d'extraction de raisonnement | `auto` |
+| `-rea, --reasoning [on\|off\|auto]` | Activer le raisonnement/thinking | `auto` |
+| `--reasoning-budget N` | Budget de tokens pour le thinking | `-1` (illimité) |
+| `--model-url MODEL_URL` | URL pour télécharger le modèle | — |
+| `--hf-repo <user>/<model>[:quant]` | Téléchargement auto depuis HF | — |
+| `-hft, --hf-token TOKEN` | Token HuggingFace | `HF_TOKEN` env |
+| `--cache-prompt, --no-cache-prompt` | Cache des prompts | activé |
+| `--cache-reuse N` | Taille min de chunk pour réutilisation du cache | `0` |
+| `--slot-save-path PATH` | Sauvegarde du cache KV par slot | désactivé |
+| `--ctx-checkpoints N` | Nombre max de checkpoints de contexte | `32` |
+| `--context-shift` | Context shift pour génération infinie | désactivé |
+| `--warmup, --no-warmup` | Warmup au démarrage | activé |
+
+### 10.8. Paramètres utilisés par AI Runner vs disponibles
+
+| Paramètre | Utilisé par AI Runner | Dans rules_engine | Notes |
+|-----------|----------------------|-------------------|-------|
+| `-m, --model` | ✅ Via binary_path | — | Configurable |
+| `-ngl` | ✅ `params.ngl` | ✅ Règle 3 | ✔️ |
+| `-ot, --override-tensor` | ✅ `params.override_tensor` | ✅ Règle 3 (MoE) | ✔️ |
+| `-ctk, -ctv` | ✅ `params.cache_type_k/v` | ✅ Règle 4 | ✔️ |
+| `-c, --ctx-size` | ✅ `params.ctx_size` | ✅ Règle 4 | ✔️ |
+| `-t, --threads` | ✅ `params.threads` | ✅ Règle 5 | ✔️ |
+| `-tb, --threads-batch` | ✅ `params.threads_batch` | ✅ Règle 5 | ✔️ |
+| `-ub, --ubatch-size` | ✅ `params.ubatch_size` | ✅ Règle 6 | ✔️ |
+| `-b, --batch-size` | ✅ `params.batch_size` | ✅ Règle 6 | ✔️ |
+| `--flash-attn` | ✅ `params.flash_attn` | ✅ Règle 7 | ⚠️ **Bug syntaxe** |
+| `--no-kv-offload` | ✅ `params.no_kv_offload` | ✅ Règle 3 (MoE) | ✔️ |
+| `--temp` | ✅ `params.temp` | ✅ `ConfigRequest` | ✔️ |
+| `-sm, --split-mode` | ❌ Non implémenté | ❌ | Multi-GPU |
+| `-ts, --tensor-split` | ❌ Non implémenté | ❌ | Multi-GPU |
+| `--mlock` | ❌ Non implémenté | ❌ | CPU only |
+| `--numa` | ❌ Non implémenté | ❌ | NUMA systems |
+| `--samplers` | ❌ Non implémenté | ❌ | Sampling avancé |
+| `--top-k, --top-p` | ❌ Non implémenté | ❌ | Sampling |
+| `--min-p` | ❌ Non implémenté | ❌ | Sampling (meilleur que top-p) |
+| `--repeat-penalty` | ❌ Non implémenté | ❌ | Contrôle répétition |
+| `--dry-multiplier` | ❌ Non implémenté | ❌ | Anti-répétition avancé |
+| `--mirostat` | ❌ Non implémenté | ❌ | Sampling adaptatif |
+| `--json-schema` | ❌ Non implémenté | ❌ | Sortie structurée |
+| `-j, --grammar` | ❌ Non implémenté | ❌ | Contrainte BNF |
+| `--jinja` | ❌ `build_chat_command()` tente de l'utiliser | ❌ | Chat template |
+| `--reasoning-format` | ❌ Non implémenté | ❌ | Thinking tokens |
+| `--cache-prompt` | ❌ Non implémenté | ❌ | Performance |
+| `--no-mmap` | ❌ Non implémenté | ❌ | Cas CPU |
+| `-cmoe, --cpu-moe` | ❌ (utilise `-ot` à la place) | ❌ | Alternative MoE |
+| `--prio` | ❌ Non implémenté | ❌ | Priorité process |
+
+### 10.9. Liste complète des quants GGUF
+
+| ID | Nom | Bits/poids | Usage |
+|----|-----|-----------|-------|
+| 0 | F32 | 32 | Haute précision, rare |
+| 1 | F16 | 16 | Float 16, référence |
+| 2 | Q4_0 | 4.0 | Legacy 4-bit |
+| 3 | Q4_1 | 4.5 | Legacy 4-bit |
+| 7 | Q8_0 | 8.0 | Pas de perte notable |
+| 8 | Q5_0 | 5.0 | Legacy 5-bit |
+| 9 | Q5_1 | 5.5 | Legacy 5-bit |
+| 10 | Q2_K | 2.5 | Très comprimé, perte forte |
+| 11 | Q3_K | 3.5 | K-quant 3-bit |
+| 12 | Q4_K | 4.5 | K-quant 4-bit |
+| 13 | Q5_K | 5.5 | K-quant 5-bit |
+| 14 | Q6_K | 6.5 | K-quant 6-bit |
+| 15 | Q8_K | 8.5 | K-quant 8-bit |
+| 16 | IQ2_XXS | 2.25 | Importance quant 2-bit extrême |
+| 17 | IQ2_XS | 2.5 | Importance quant 2-bit |
+| 18 | IQ3_XXS | 3.25 | Importance quant 3-bit extrême |
+| 19 | IQ1_S | 1.5 | 1-bit (expérimental) |
+| 20 | IQ4_NL | 4.5 | Importance quant 4-bit |
+| 21 | IQ3_S | 3.5 | Importance quant 3-bit |
+| 22 | IQ2_S | 2.5 | Importance quant 2-bit |
+| 23 | IQ4_XS | 4.5 | Importance quant 4-bit serré |
+| 24 | IQ1_M | 1.75 | 1-bit moyen (expérimental) |
+
+**Recommandations :**
+- **Sweet spot qualité/performance** : `Q4_K_M` (ID 12)
+- **Haute qualité** : `Q8_0` (ID 7) ou `Q6_K` (ID 14)
+- **VRAM très limitée** : `Q3_K_M` (ID 11) ou `IQ4_XS` (ID 23)
+- **Perte minimale** : `Q8_0` (ID 7) — quasi sans perte
+
+### 10.10. Variables d'environnement
+
+| Variable | Équivalent CLI |
+|----------|----------------|
+| `LLAMA_ARG_MODEL` | `-m, --model` |
+| `LLAMA_ARG_CTX_SIZE` | `-c, --ctx-size` |
+| `LLAMA_ARG_THREADS` | `-t, --threads` |
+| `LLAMA_ARG_N_PREDICT` | `-n, --predict` |
+| `LLAMA_ARG_N_GPU_LAYERS` | `-ngl, --gpu-layers` |
+| `LLAMA_ARG_FLASH_ATTN` | `--flash-attn` |
+| `LLAMA_ARG_BATCH` | `-b, --batch-size` |
+| `LLAMA_ARG_UBATCH` | `-ub, --ubatch-size` |
+| `LLAMA_ARG_KV_OFFLOAD` | `--kv-offload` |
+| `LLAMA_ARG_OVERRIDE_TENSOR` | `-ot, --override-tensor` |
+| `LLAMA_ARG_SPLIT_MODE` | `-sm, --split-mode` |
+| `LLAMA_ARG_TENSOR_SPLIT` | `-ts, --tensor-split` |
+| `LLAMA_ARG_CPU_MOE` | `-cmoe, --cpu-moe` |
+| `LLAMA_ARG_MLOCK` | `--mlock` |
+| `LLAMA_ARG_MMAP` | `--no-mmap` |
+| `LLAMA_ARG_NUMA` | `--numa` |
+| `LLAMA_ARG_PERF` | `--no-perf` |
+| `HF_TOKEN` | `--hf-token` |
+| `LLAMA_ARG_PORT` | `--port` (serveur) |
+| `LLAMA_ARG_HOST` | `--host` (serveur) |
+| `LLAMA_ARG_N_PARALLEL` | `-np, --parallel` (serveur) |
+| `LLAMA_API_KEY` | `--api-key` (serveur) |
+
+---
+
+## 11. Références
 
 - [Vidéo originale : Everything That Actually Matters for Local AI](https://www.youtube.com/watch?v=SsUKTFSQoGM) (Codacus)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)
+- [llama-cli help reformatted (guide complet des paramètres)](https://github.com/ggml-org/llama.cpp/discussions/15709)
+- [llama-server README (doc officielle)](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+- [llama.cpp guide — SteelPh0enix](https://steelph0enix.github.io/posts/llama-cpp-guide/)
 - [GGUF format specification](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md)
 - [HuggingFace API](https://huggingface.co/docs/api-inference/index)
 - [FastAPI](https://fastapi.tiangolo.com/)

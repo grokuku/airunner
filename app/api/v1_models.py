@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.gguf_parser import parse_gguf_header, metadata_to_model_meta
 from app.core import config as app_config
+from app.core.run_manager import get_run_manager
 from app.models import HfDownloadRequest, ModelMeta
 
 logger = logging.getLogger("ai-runner")
@@ -31,6 +32,27 @@ router = APIRouter(tags=["models"])
 def _get_models_dir() -> str:
     """Retourne le dossier des modèles depuis la configuration."""
     return app_config.config.storage.models_dir
+
+
+def _mark_loaded_model(models: list[ModelMeta]) -> list[ModelMeta]:
+    """Marque le modèle actuellement chargé comme loaded=True.
+
+    Mute les objets du cache global _models_cache (volontairement).
+    Le flag .loaded est éphémère : il reflète l'état au moment de l'appel.
+    """
+    rm = get_run_manager()
+    loaded_id = rm.get_loaded_model_id()
+    for m in models:
+        m.loaded = loaded_id is not None and m.id == loaded_id
+    return models
+
+
+def _mark_single_model_loaded(model: ModelMeta) -> ModelMeta:
+    """Marque un seul modèle comme loaded si c'est le modèle actif."""
+    rm = get_run_manager()
+    loaded_id = rm.get_loaded_model_id()
+    model.loaded = loaded_id is not None and model.id == loaded_id
+    return model
 
 
 def _scan_local_models() -> list[ModelMeta]:
@@ -85,7 +107,7 @@ async def list_models():
     global _models_cache
     if _models_cache is None:
         _models_cache = _scan_local_models()
-    return _models_cache
+    return _mark_loaded_model(_models_cache)
 
 
 @router.post("/models/scan", response_model=list[ModelMeta])
@@ -96,7 +118,7 @@ async def scan_models():
     """
     global _models_cache
     _models_cache = _scan_local_models()
-    return _models_cache
+    return _mark_loaded_model(_models_cache)
 
 
 @router.get("/models/hf-search")
@@ -210,9 +232,10 @@ async def get_model(model_id: str):
     try:
         metadata = parse_gguf_header(filepath)
         metadata["_filepath"] = filepath
-        return metadata_to_model_meta(
+        model = metadata_to_model_meta(
             metadata, model_id=os.path.basename(filepath).replace(".gguf", "")
         )
+        return _mark_single_model_loaded(model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

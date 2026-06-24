@@ -113,8 +113,10 @@ async function updateGPUIndicator() {
     const status = await getStatus();
     const el = document.getElementById('gpuIndicator');
     if (status.mode === 'cuda' && status.gpu?.length) {
-      const gpu = status.gpu[0];
-      el.textContent = `${gpu.name} • ${gpu.vram_free_gb}G libre`;
+      const count = status.gpu.length;
+      const freeTotal = status.gpu.reduce((s, g) => s + g.vram_free_gb, 0);
+      const name = count > 1 ? `${count} GPUs` : status.gpu[0].name;
+      el.textContent = `${name} • ${freeTotal.toFixed(1)}G libre`;
       el.className = 'text-xs px-2 py-0.5 rounded-full bg-green-900 text-green-300';
     } else {
       el.textContent = 'CPU mode';

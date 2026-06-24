@@ -66,7 +66,7 @@ def build_command(
 
     # Flash attention
     if params.get("flash_attn"):
-        parts.append("  --flash-attn")
+        parts.append("  --flash-attn=on")
 
     # No KV offload
     if params.get("no_kv_offload"):
@@ -79,6 +79,17 @@ def build_command(
     # Temperature
     temp = params.get("temp", 0.7)
     parts.append(f"  --temp {temp}")
+
+    # Multi-GPU : split mode, tensor split, main GPU
+    split_mode = params.get("split_mode")
+    if split_mode and split_mode != "none":
+        parts.append(f"  --split-mode {split_mode}")
+        ts = params.get("tensor_split")
+        if ts and __import__("re").match(r"^\d+(,\d+)+$", ts):
+            parts.append(f"  --tensor-split {ts}")
+        mg = params.get("main_gpu")
+        if mg is not None and mg != 0:
+            parts.append(f"  --main-gpu {mg}")
 
     # Prompt
     if prompt:
@@ -134,13 +145,24 @@ def build_chat_command(
         parts.append(f"  --batch-size {batch}")
 
     if params.get("flash_attn"):
-        parts.append("  --flash-attn")
+        parts.append("  --flash-attn=on")
 
     if params.get("no_kv_offload"):
         parts.append("  --no-kv-offload")
 
     temp = params.get("temp", 0.7)
     parts.append(f"  --temp {temp}")
+
+    # Multi-GPU : split mode, tensor split, main GPU
+    split_mode = params.get("split_mode")
+    if split_mode and split_mode != "none":
+        parts.append(f"  --split-mode {split_mode}")
+        ts = params.get("tensor_split")
+        if ts and __import__("re").match(r"^\d+(,\d+)+$", ts):
+            parts.append(f"  --tensor-split {ts}")
+        mg = params.get("main_gpu")
+        if mg is not None and mg != 0:
+            parts.append(f"  --main-gpu {mg}")
 
     # Chat mode + Jinja template (support des templates personnalisés GGUF)
     # Pas de --interactive : on veut une réponse unique, pas un prompt interactif

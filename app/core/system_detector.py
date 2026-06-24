@@ -12,9 +12,16 @@ système ou des sorties de commandes, pas de base de données matérielle.
 import asyncio
 import os
 import re
+import time
 from typing import Optional
 
 from app.models import CPUInfo, GPUInfo, RAMInfo, SystemStatus
+
+
+# Cache de détection système (TTL : 2 secondes)
+_system_cache: Optional[SystemStatus] = None
+_system_cache_time: float = 0.0
+_SYSTEM_CACHE_TTL = 2.0
 
 
 # ─── GPU ────────────────────────────────────────────────
@@ -172,11 +179,21 @@ def _get_cpu_model() -> str:
 # ─── Aggregateur ────────────────────────────────────────
 
 
-async def detect() -> SystemStatus:
+async def detect(force: bool = False) -> SystemStatus:
     """Détecte toutes les ressources système en parallèle.
+
+    Utilise un cache de {_SYSTEM_CACHE_TTL}s pour éviter les appels
+    répétés à nvidia-smi (coûteux). Passer force=True pour forcer
+    une détection fraîche.
 
     C'est le point d'entrée principal pour la détection système.
     """
+    global _system_cache, _system_cache_time
+
+    now = time.time()
+    if not force and _system_cache is not None and (now - _system_cache_time) < _SYSTEM_CACHE_TTL:
+        return _system_cache
+
     gpu_task = asyncio.create_task(detect_gpu())
     ram_task = asyncio.create_task(detect_ram())
     cpu_task = asyncio.create_task(detect_cpu())
@@ -185,10 +202,14 @@ async def detect() -> SystemStatus:
 
     mode = "cuda" if gpus else "cpu"
 
-    return SystemStatus(
+    result = SystemStatus(
         gpu=gpus,
         ram=ram,
         cpu=cpu,
         available=bool(gpus) or ram.total_gb > 0,
         mode=mode,
     )
+
+    _system_cache = result
+    _system_cache_time = now
+    return result

@@ -93,21 +93,58 @@ async function downloadLlamacpp() {
 
 
 function renderGPUCard(status) {
-  if (status.mode === 'cuda' && status.gpu?.length) {
-    const g = status.gpu[0];
-    const pct = g.vram_total_gb > 0 ? ((g.vram_used_gb / g.vram_total_gb) * 100).toFixed(0) : 0;
-    return `
+  const gpus = status.gpu ?? [];
+  if (status.mode === 'cuda' && gpus.length) {
+    const gpuCount = gpus.length;
+    const combinedTotal = gpus.reduce((s, g) => s + g.vram_total_gb, 0);
+    const combinedUsed = gpus.reduce((s, g) => s + g.vram_used_gb, 0);
+    const combinedPct = combinedTotal > 0 ? ((combinedUsed / combinedTotal) * 100).toFixed(0) : 0;
+
+    // Carte combinée (première ligne)
+    let html = `
       <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">
-        <div class="text-xs text-gray-400 mb-1">🎮 GPU</div>
-        <div class="font-semibold text-sm truncate">${g.name}</div>
-        <div class="mt-2 flex justify-between text-xs text-gray-400">
-          <span>VRAM</span>
-          <span>${g.vram_used_gb}G / ${g.vram_total_gb}G</span>
-        </div>
-        <div class="mt-1 h-2 bg-dark-700 rounded-full overflow-hidden">
-          <div class="h-full bg-blue-500 rounded-full progress-bar" style="width:${pct}%"></div>
-        </div>
+        <div class="text-xs text-gray-400 mb-1">🎮 GPU${gpuCount > 1 ? ` (×${gpuCount})` : ''}</div>
+        ${gpuCount > 1 ? `
+          <div class="font-semibold text-sm">${combinedTotal.toFixed(0)}G combinée</div>
+          <div class="mt-2 flex justify-between text-xs text-gray-400">
+            <span>VRAM totale</span>
+            <span>${combinedUsed.toFixed(1)}G / ${combinedTotal.toFixed(0)}G</span>
+          </div>
+          <div class="mt-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-500 rounded-full progress-bar" style="width:${combinedPct}%"></div>
+          </div>
+        ` : `
+          <div class="font-semibold text-sm truncate">${gpus[0].name}</div>
+          <div class="mt-2 flex justify-between text-xs text-gray-400">
+            <span>VRAM</span>
+            <span>${gpus[0].vram_used_gb}G / ${gpus[0].vram_total_gb}G</span>
+          </div>
+          <div class="mt-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-500 rounded-full progress-bar" style="width:${combinedPct}%"></div>
+          </div>
+        `}
       </div>`;
+
+    // Cartes individuelles si multi-GPU
+    if (gpuCount > 1) {
+      html += gpus.map(g => {
+        const pct = g.vram_total_gb > 0 ? ((g.vram_used_gb / g.vram_total_gb) * 100).toFixed(0) : 0;
+        return `
+          <div class="bg-dark-800 rounded-xl p-3 border border-dark-600">
+            <div class="text-xs text-gray-400 mb-1">🎮 GPU ${g.index}</div>
+            <div class="font-semibold text-xs truncate">${g.name}</div>
+            <div class="mt-1 flex justify-between text-xs text-gray-400">
+              <span>VRAM</span>
+              <span>${g.vram_used_gb}G / ${g.vram_total_gb}G</span>
+            </div>
+            <div class="mt-1 h-1.5 bg-dark-700 rounded-full overflow-hidden">
+              <div class="h-full bg-cyan-500 rounded-full progress-bar" style="width:${pct}%"></div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    return html;
   }
   return `
     <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">

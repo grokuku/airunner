@@ -119,20 +119,29 @@ def estimate_speed(
     strategy: str,
     config_params: dict,
     gpu: Optional[GPUInfo],
+    system: Optional[SystemStatus] = None,
 ) -> str:
     """Estime la vitesse d'inférence en tok/s.
 
     C'est une estimation approximative basée sur la bande passante.
+    Multi-GPU : la bande passante est multipliée par le nombre de GPUs.
     """
     # Si paramètres inconnus, pas d'estimation possible
     if model_meta.active_params_b == 0:
         return "Estimation indisponible (paramètres inconnus)"
 
-    # Si pas de GPU, estimation CPU très conservative
-    if not gpu:
+    # Si pas de GPU détecté du tout, estimation CPU très conservative
+    if not gpu and not (system and system.gpu):
         return "1-5 tok/s (CPU only)"
 
-    bandwidth_gbs = estimate_gpu_bandwidth(gpu)
+    # Utiliser le premier GPU disponible pour la bande passante de base
+    first_gpu = gpu or system.gpu[0] if system and system.gpu else None
+    bandwidth_gbs = estimate_gpu_bandwidth(first_gpu) if first_gpu else 200
+
+    # Multi-GPU : la bande passante totale est la somme de tous les GPUs
+    if system and system.gpu and len(system.gpu) > 1:
+        total_bandwidth = sum(estimate_gpu_bandwidth(g) for g in system.gpu)
+        bandwidth_gbs = total_bandwidth
 
     if strategy == "dense_full":
         # Pleine vitesse GPU : limité par bande passante mémoire
@@ -223,10 +232,20 @@ def suggest(
     ctx_size = request.ctx_size if request else 8192
     quant_preference = request.quant_preference if request else None
 
-    # Récupérer le GPU principal
+    # Récupérer le GPU principal et détecter multi-GPU
     gpu = system.gpu[0] if system.gpu else None
-    vram_total = gpu.vram_total_gb if gpu else 0.0
-    vram_free = gpu.vram_free_gb if gpu else 0.0
+    multi_gpu = len(system.gpu) > 1 if system.gpu else False
+
+    if multi_gpu:
+        # VRAM combinée = somme de toutes les VRAM libres (pour quants + multi-GPU)
+        vram_total = sum(g.vram_total_gb for g in system.gpu)
+        vram_free = sum(g.vram_free_gb for g in system.gpu)
+        # VRAM du meilleur GPU individuel (pour décider si un seul GPU suffit)
+        vram_free_best_gpu = max(g.vram_free_gb for g in system.gpu)
+    else:
+        vram_total = gpu.vram_total_gb if gpu else 0.0
+        vram_free = gpu.vram_free_gb if gpu else 0.0
+        vram_free_best_gpu = vram_free
     ram_available = system.ram.available_gb
 
     # Paramètres du modèle
@@ -285,6 +304,9 @@ def suggest(
     vram_weights_gb = model_gb_final
     no_kv_offload = False
     flash_attn = False
+    split_mode = "none"
+    tensor_split = ""
+    main_gpu = 0
 
     if is_moe and gpu:
         # Stratégie MoE (basée sur la vidéo)
@@ -301,12 +323,29 @@ def suggest(
         if total_vram_needed <= vram_free * 0.85:
             # L'attention tient sur GPU → offloading optimal
             strategy = "moe_offload"
-            override_tensor = [
-                ".*attn.*=CUDA0",
-                ".*ffn_gate.*=CPU",
-                ".*ffn_down.*=CPU",
-                ".*ffn_up.*=CPU",
-            ]
+            if multi_gpu:
+                # Répartir l'attention sur plusieurs GPUs
+                per_gpu_ratios = [g.vram_free_gb for g in system.gpu]
+                total_ratio = sum(per_gpu_ratios)
+                tensor_split = ",".join(
+                    str(max(1, int(r / total_ratio * 10)))
+                    for r in per_gpu_ratios
+                )
+                split_mode = "layer"
+                override_tensor = [
+                    ".*attn.*=GPU",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
+                ]
+            else:
+                split_mode = "none"
+                override_tensor = [
+                    ".*attn.*=CUDA0",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
+                ]
             vram_weights_gb = attention_gb
             ram_weights_gb = experts_gb
             no_kv_offload = True
@@ -323,10 +362,23 @@ def suggest(
             )
             n_attn_layers = max(1, min(n_attn_layers, n_layers))
             ngl = n_attn_layers
-            override_tensor = [
-                ".*attn.*=CUDA0",
-                ".*mlp.*=CPU",
-            ]
+            if multi_gpu:
+                per_gpu_ratios = [g.vram_free_gb for g in system.gpu]
+                total_ratio = sum(per_gpu_ratios)
+                tensor_split = ",".join(
+                    str(max(1, int(r / total_ratio * 10)))
+                    for r in per_gpu_ratios
+                )
+                split_mode = "layer"
+                override_tensor = [
+                    ".*attn.*=GPU",
+                    ".*mlp.*=CPU",
+                ]
+            else:
+                override_tensor = [
+                    ".*attn.*=CUDA0",
+                    ".*mlp.*=CPU",
+                ]
             vram_weights_gb = (model_gb_final / n_layers) * n_attn_layers
             ram_weights_gb = model_gb_final - vram_weights_gb
             no_kv_offload = True
@@ -339,21 +391,58 @@ def suggest(
         # Modèle dense
         total_needed_full = model_gb_final + kv_gb + VRAM_OVERHEAD_GB
 
-        if total_needed_full <= vram_free * 0.85:
-            # Tout tient sur GPU
+        # 1) Vérifier si le modèle tient sur LE MEILLEUR GPU seul
+        if total_needed_full <= vram_free_best_gpu * 0.85:
             strategy = "dense_full"
+            split_mode = "none"
+            tensor_split = ""
+            main_gpu = 0
             ngl = 99
             vram_weights_gb = model_gb_final
             ram_weights_gb = 0.0
-
-            if total_needed_full > vram_free * 0.7:
+            if total_needed_full > vram_free_best_gpu * 0.7:
                 warnings.append(
-                    f"Utilisation VRAM élevée ({total_needed_full:.1f}/{vram_free:.1f} Go). "
+                    f"Utilisation VRAM élevée ({total_needed_full:.1f}/{vram_free_best_gpu:.1f} Go). "
                     "Surveillez les fuites mémoire."
                 )
+
+        # 2) Sinon, multi-GPU + VRAM combinée suffisante → split
+        elif multi_gpu and total_needed_full <= vram_free * 0.85:
+            strategy = "dense_full"
+            ngl = n_layers
+            per_gpu_ratios = [g.vram_free_gb for g in system.gpu]
+            total_ratio = sum(per_gpu_ratios)
+            tensor_split = ",".join(
+                str(max(1, int(r / total_ratio * 10)))
+                for r in per_gpu_ratios
+            )
+            split_mode = "layer"
+            main_gpu = 0
+            vram_weights_gb = model_gb_final
+            ram_weights_gb = 0.0
+            warnings.append(
+                f"Modèle dense réparti sur {len(system.gpu)} GPUs "
+                f"(split_mode=layer, tensor_split={tensor_split})."
+            )
+
+        # 3) Sinon, offloading forcé (multi-GPU si disponible)
         else:
-            # Offloading forcé
             strategy = "dense_partial"
+            if multi_gpu:
+                split_mode = "layer"
+                per_gpu_ratios = [g.vram_free_gb for g in system.gpu]
+                total_ratio = sum(per_gpu_ratios)
+                tensor_split = ",".join(
+                    str(max(1, int(g.vram_free_gb / max(vram_free, 1) * 10)))
+                    for g in system.gpu
+                )
+                main_gpu = 0
+                warning_gpu_info = f" réparti sur {len(system.gpu)} GPUs"
+            else:
+                split_mode = "none"
+                tensor_split = ""
+                main_gpu = 0
+                warning_gpu_info = ""
             ngl = int(
                 (vram_free * 0.85 - kv_gb - VRAM_OVERHEAD_GB)
                 / (model_gb_final / n_layers)
@@ -362,7 +451,7 @@ def suggest(
             vram_weights_gb = (model_gb_final / n_layers) * ngl
             ram_weights_gb = model_gb_final - vram_weights_gb
             warnings.append(
-                f"Modèle dense trop grand pour la VRAM. "
+                f"Modèle dense{warning_gpu_info} trop grand pour la VRAM. "
                 f"Offloading forcé : {ngl}/{n_layers} couches sur GPU. "
                 "Les performances seront réduites."
             )
@@ -440,9 +529,12 @@ def suggest(
         "flash_attn": flash_attn,
         "no_kv_offload": no_kv_offload,
         "temp": request.temp if request else 0.7,
+        "split_mode": split_mode,
+        "tensor_split": tensor_split,
+        "main_gpu": main_gpu,
     }
 
-    speed_estimate = estimate_speed(model_meta, strategy, config_params, gpu)
+    speed_estimate = estimate_speed(model_meta, strategy, config_params, gpu, system=system)
 
     # ── Assembler la réponse ──
 
