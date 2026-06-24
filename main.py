@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import v1_system, v1_models, v1_chat, v1_comfy, v1_llamacpp, v1_openai, ui
+from app.api import v1_system, v1_models, v1_chat, v1_comfy, v1_llamacpp, v1_openai, v1_benchmark, ui
 from app.core.config import AppConfig, config, load_config
 
 logger = logging.getLogger("ai-runner")
@@ -60,6 +60,7 @@ app.include_router(v1_models.router, prefix="/api/v1")
 app.include_router(v1_chat.router, prefix="/api/v1")
 app.include_router(v1_comfy.router, prefix="/api/v1")
 app.include_router(v1_llamacpp.router, prefix="/api/v1")
+app.include_router(v1_benchmark.router, prefix="/api/v1")
 app.include_router(v1_openai.router)  # Pas de prefix : /v1/...
 
 # Routes de l'interface web
