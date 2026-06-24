@@ -25,14 +25,17 @@ from app.models import (
 # Quantifications disponibles (du plus précis au moins précis)
 # Chaque entrée : (nom, bits_per_weight, description)
 AVAILABLE_QUANTS = [
+    ("F16",    16.0, "Float 16, précision maximale, très rare"),
+    ("Q8_K",   8.5,  "8-bit K-quant, quasi sans perte"),
     ("Q8_0",   8.0,  "8-bit, pas de perte"),
-    ("Q6_K",   6.0,  "6-bit K-quant, très bonne qualité"),
-    ("Q5_K_M", 5.5,  "5-bit K-quant medium, excellent"),
-    ("Q5_K_S", 5.0,  "5-bit K-quant small"),
-    ("Q4_K_M", 4.5,  "4-bit K-quant medium, sweet spot"),
-    ("Q4_K_S", 4.0,  "4-bit K-quant small"),
+    ("Q6_K",   6.5,  "6-bit K-quant, très bonne qualité"),
+    ("Q5_K",   5.5,  "5-bit K-quant (toute variante)"),
+    ("Q5_0",   5.0,  "5-bit legacy"),
+    ("Q4_K",   4.5,  "4-bit K-quant (toute variante), sweet spot"),
+    ("Q4_0",   4.0,  "4-bit legacy"),
+    ("IQ4_NL", 4.5,  "4-bit importance quant, nouvel layout"),
     ("IQ4_XS", 4.0,  "4-bit importance quant, ~10% plus petit"),
-    ("Q3_K_M", 3.5,  "3-bit K-quant medium, dégradation visible"),
+    ("Q3_K",   3.5,  "3-bit K-quant (toute variante)"),
     ("IQ3_XXS",3.0,  "3-bit importance quant très serré"),
     ("Q2_K",   2.5,  "2-bit K-quant, perte significative"),
 ]
