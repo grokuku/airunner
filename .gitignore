@@ -1,0 +1,30 @@
+# AI Runner — .gitignore
+
+# ─── Python ───────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# ─── Volumes (données utilisateur) ──────────────────
+models/
+data/
+presets/
+config/config.yaml
+
+# ─── Binaires téléchargés ──────────────────────────
+llama-bin/
+
+# ─── IDE ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Docker ──────────────────────────────────────────
+.docker/
+
+# ─── OS ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db

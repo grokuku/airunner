@@ -1,0 +1,20 @@
+services:
+  ai-runner:
+    build: .
+    container_name: ai-runner
+    ports:
+      - "8311:8311"
+    runtime: nvidia
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - CONFIG_PATH=/app/config/config.yaml
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./presets:/app/presets
+      - ./llama-bin:/app/llama-bin   # Binaires llama.cpp téléchargés
+    restart: unless-stopped
+    stop_grace_period: 30s

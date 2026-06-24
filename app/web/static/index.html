@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Runner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: { 900: '#0f1117', 800: '#1a1b23', 700: '#23242e', 600: '#2d2e3a' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #4a4b5a; border-radius: 2px; }
+    .token-stream { animation: fadeIn 0.1s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes pulse-dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+    .loading-dot { animation: pulse-dot 1.4s infinite; }
+    .loading-dot:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dot:nth-child(3) { animation-delay: 0.4s; }
+    .progress-bar { transition: width 0.3s ease; }
+  </style>
+</head>
+<body class="bg-dark-900 text-gray-100 min-h-screen antialiased">
+
+  <!-- Navigation -->
+  <nav class="border-b border-dark-600 bg-dark-800 px-4 py-3 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">AI Runner</span>
+        <span id="gpuIndicator" class="text-xs px-2 py-0.5 rounded-full bg-dark-600 text-gray-400">CPU</span>
+      </div>
+      <div class="flex gap-1">
+        <button onclick="navigate('dashboard')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="dashboard">Dashboard</button>
+        <button onclick="navigate('models')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="models">Modèles</button>
+        <button onclick="navigate('config')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="config">Config</button>
+        <button onclick="navigate('test')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="test">🧪 Test</button>
+        <button onclick="navigate('terminal')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="terminal">Terminal</button>
+        <button onclick="navigate('benchmark')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="benchmark">📊 Benchmark</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="max-w-7xl mx-auto p-4">
+    <div id="page-dashboard" class="page-section"></div>
+    <div id="page-models" class="page-section hidden"></div>
+    <div id="page-config" class="page-section hidden"></div>
+    <div id="page-test" class="page-section hidden"></div>
+    <div id="page-terminal" class="page-section hidden"></div>
+    <div id="page-benchmark" class="page-section hidden"></div>
+  </main>
+
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/dashboard.js"></script>
+  <script src="/static/js/models.js"></script>
+  <script src="/static/js/config.js"></script>
+  <script src="/static/js/terminal.js"></script>
+  <script src="/static/js/test.js"></script>
+  <script src="/static/js/benchmark.js"></script>
+  <script>
+    // Navigation SPA
+    function navigate(page) {
+      document.querySelectorAll('.page-section').forEach(el => el.classList.add('hidden'));
+      const target = document.getElementById(`page-${page}`);
+      if (target) target.classList.remove('hidden');
+      
+      document.querySelectorAll('.nav-btn').forEach(b => {
+        b.classList.toggle('bg-dark-600', b.dataset.page === page);
+        b.classList.toggle('text-blue-300', b.dataset.page === page);
+      });
+      
+      // Charger le contenu si nécessaire
+      if (page === 'dashboard') renderDashboard();
+      if (page === 'models') renderModels();
+      if (page === 'config') renderConfig();
+      if (page === 'test') renderTest();
+      if (page === 'terminal') renderTerminal();
+      if (page === 'benchmark') renderBenchmark();
+    }
+
+    // Démarrer sur le dashboard
+    document.addEventListener('DOMContentLoaded', () => {
+      navigate('dashboard');
+      // Rafraîchir le statut toutes les 10s
+      setInterval(updateGPUIndicator, 10000);
+    });
+  </script>
+</body>
+</html>

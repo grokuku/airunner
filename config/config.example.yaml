@@ -1,0 +1,20 @@
+# AI Runner — Configuration
+# Copier ce fichier en config.yaml et éditer
+
+server:
+  host: "0.0.0.0"
+  port: 8311
+  # auth_token: "mon-token-secret"  # Optionnel, Bearer token pour API
+
+storage:
+  models_dir: "/app/models"
+  data_dir: "/app/data"
+  presets_dir: "/app/presets"
+
+huggingface:
+  token: ""  # Optionnel, pour modèles gated. Via ${HF_TOKEN} aussi possible
+
+llamacpp:
+  binary_path: "/app/llama-bin/llama-cli"  # Téléchargé par l'app via POST /api/v1/llamacpp/update
+  default_temp: 0.7
+  default_ctx_size: 8192
