@@ -10,12 +10,15 @@ système ou des sorties de commandes, pas de base de données matérielle.
 """
 
 import asyncio
+import logging
 import os
 import re
 import time
 from typing import Optional
 
 from app.models import CPUInfo, GPUInfo, RAMInfo, SystemStatus
+
+logger = logging.getLogger("ai-runner")
 
 
 # Cache de détection système (TTL : 2 secondes)
@@ -27,49 +30,159 @@ _SYSTEM_CACHE_TTL = 2.0
 # ─── GPU ────────────────────────────────────────────────
 
 
-async def detect_gpu() -> list[GPUInfo]:
-    """Détecte les GPUs NVIDIA via nvidia-smi.
+async def _run_nvidia_smi(fields: list[str]) -> tuple[Optional[str], Optional[str], int]:
+    """Lance nvidia-smi avec les champs demandés et retourne (stdout, stderr, returncode).
 
-    Retourne une liste vide si nvidia-smi n'est pas disponible.
+    Retourne (None, None, -1) si nvidia-smi n'est pas trouvé ou timeout.
     """
     try:
+        query = ",".join(fields)
         proc = await asyncio.create_subprocess_exec(
             "nvidia-smi",
-            "--query-gpu=index,name,memory.total,memory.free,memory.used,compute_cap,driver_version",
+            f"--query-gpu={query}",
             "--format=csv,noheader,nounits",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        return (
+            stdout.decode(errors="replace") if stdout else "",
+            stderr.decode(errors="replace") if stderr else "",
+            proc.returncode if proc.returncode is not None else -1,
+        )
+    except FileNotFoundError:
+        logger.warning("nvidia-smi non trouvé — GPU non détecté")
+        return None, None, -1
+    except asyncio.TimeoutError:
+        logger.warning("nvidia-smi a dépassé le timeout de 10s")
+        return None, None, -1
 
-        if proc.returncode != 0:
+
+def _parse_gpu_lines(stdout: str, has_compute_cap: bool) -> list[GPUInfo]:
+    """Parse la sortie CSV de nvidia-smi en liste de GPUInfo.
+
+    Args:
+        stdout: Sortie texte de nvidia-smi (format csv,noheader,nounits)
+        has_compute_cap: True si compute_cap fait partie des champs demandés
+    """
+    import csv
+
+    gpus: list[GPUInfo] = []
+    for line in stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        # Utiliser le module csv pour gérer correctement les champs entre guillemets
+        # (certains noms de GPU peuvent contenir des virgules)
+        try:
+            row = next(csv.reader([line]))
+        except Exception:
+            # Fallback: split simple sur ", "
+            row = [p.strip() for p in line.split(", ")]
+        parts = [p.strip() for p in row]
+
+        # Nettoyer les unités résiduelles (au cas où nounits n'est pas supporté)
+        parts = [p.replace(" MiB", "").replace(" W", "") for p in parts]
+
+        min_parts = 6 if not has_compute_cap else 7
+        if len(parts) < min_parts:
+            logger.debug(f"Ligne GPU ignorée (pas assez de champs): {line}")
+            continue
+
+        try:
+            idx = 0
+            index = int(parts[idx]); idx += 1
+            name = parts[idx]; idx += 1
+            vram_total = _mib_to_gb(float(parts[idx])); idx += 1
+            vram_free = _mib_to_gb(float(parts[idx])); idx += 1
+            vram_used = _mib_to_gb(float(parts[idx])); idx += 1
+
+            if has_compute_cap:
+                compute_cap = parts[idx] if parts[idx] != "N/A" else ""
+                idx += 1
+            else:
+                compute_cap = ""
+
+            driver = parts[idx] if idx < len(parts) else ""
+
+            gpu = GPUInfo(
+                index=index,
+                name=name,
+                vram_total_gb=vram_total,
+                vram_free_gb=vram_free,
+                vram_used_gb=vram_used,
+                compute_cap=compute_cap,
+                driver=driver,
+            )
+            gpus.append(gpu)
+        except (ValueError, IndexError) as e:
+            logger.debug(f"Erreur parsing ligne GPU '{line}': {e}")
+            continue
+
+    return gpus
+
+
+async def detect_gpu() -> list[GPUInfo]:
+    """Détecte les GPUs NVIDIA via nvidia-smi.
+
+    Retourne une liste vide si nvidia-smi n'est pas disponible.
+    Utilise une requête de secours sans compute_cap si la requête complète
+    échoue (compute_cap n'est pas supporté par toutes les versions de nvidia-smi).
+    """
+    # Tentative 1 : requête complète avec compute_cap
+    full_fields = [
+        "index", "name", "memory.total", "memory.free",
+        "memory.used", "compute_cap", "driver_version",
+    ]
+    stdout, stderr, rc = await _run_nvidia_smi(full_fields)
+
+    if stdout is not None and rc == 0:
+        gpus = _parse_gpu_lines(stdout, has_compute_cap=True)
+        if gpus:
+            for g in gpus:
+                logger.info(
+                    f"GPU détecté : {g.name} — "
+                    f"VRAM {g.vram_total_gb} Go (libre: {g.vram_free_gb} Go), "
+                    f"compute_cap={g.compute_cap or 'N/A'}, driver={g.driver}"
+                )
+            logger.info(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
+            return gpus
+        else:
+            logger.warning("nvidia-smi a réussi mais aucun GPU n'a été parsé")
+            if stderr:
+                logger.debug(f"nvidia-smi stderr: {stderr.strip()}")
             return []
 
-        gpus = []
-        for line in stdout.decode().strip().split("\n"):
-            line = line.strip().replace(" MiB", "").replace(" W", "")
-            parts = [p.strip() for p in line.split(", ")]
-            if len(parts) < 7:
-                continue
+    # Tentative 2 : requête sans compute_cap (plus compatible)
+    if stdout is not None and rc != 0:
+        logger.info(
+            f"nvidia-smi a échoué (rc={rc}) avec compute_cap, "
+            f"réessai sans ce champ"
+        )
+        if stderr:
+            logger.debug(f"nvidia-smi stderr: {stderr.strip()}")
 
-            try:
-                gpu = GPUInfo(
-                    index=int(parts[0]),
-                    name=parts[1],
-                    vram_total_gb=_mib_to_gb(float(parts[2])),
-                    vram_free_gb=_mib_to_gb(float(parts[3])),
-                    vram_used_gb=_mib_to_gb(float(parts[4])),
-                    compute_cap=parts[5] if parts[5] != "N/A" else "",
-                    driver=parts[6],
-                )
-                gpus.append(gpu)
-            except (ValueError, IndexError):
-                continue
+    basic_fields = [
+        "index", "name", "memory.total", "memory.free",
+        "memory.used", "driver_version",
+    ]
+    stdout2, stderr2, rc2 = await _run_nvidia_smi(basic_fields)
 
+    if stdout2 is not None and rc2 == 0:
+        gpus = _parse_gpu_lines(stdout2, has_compute_cap=False)
+        for g in gpus:
+            logger.info(
+                f"GPU détecté : {g.name} — "
+                f"VRAM {g.vram_total_gb} Go (libre: {g.vram_free_gb} Go), "
+                f"driver={g.driver}"
+            )
+        logger.info(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
         return gpus
 
-    except (FileNotFoundError, asyncio.TimeoutError):
-        return []
+    # nvidia-smi indisponible ou aucune GPU
+    if rc == -1 and rc2 == -1:
+        logger.info("nvidia-smi indisponible — mode CPU uniquement")
+    return []
 
 
 def _mib_to_gb(mib: float) -> float:
@@ -201,6 +314,11 @@ async def detect(force: bool = False) -> SystemStatus:
     gpus, ram, cpu = await asyncio.gather(gpu_task, ram_task, cpu_task)
 
     mode = "cuda" if gpus else "cpu"
+
+    logger.info(
+        f"Détection système : mode={mode}, GPUs={len(gpus)}, "
+        f"RAM dispo={ram.available_gb} Go, CPU cores={cpu.cores}"
+    )
 
     result = SystemStatus(
         gpu=gpus,

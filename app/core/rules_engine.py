@@ -12,12 +12,15 @@ Aucune base de modèles statique : tout est calculé à partir des données
 réelles du GGUF et du système.
 """
 
+import logging
 from typing import Optional
 
 from app.models import (
     ConfigRequest, ConfigSuggestion, GPUInfo,
     ModelMeta, RamEstimate, VramEstimate, SystemStatus,
 )
+
+logger = logging.getLogger("ai-runner")
 
 
 # ─── Constantes ────────────────────────────────────────
@@ -518,6 +521,14 @@ def suggest(
         except ValueError:
             flash_attn = False
 
+    # ── Vérification : ngl ne doit pas être 0 si un GPU est disponible ──
+    if system.gpu and ngl == 0:
+        ngl = 1
+        logger.warning(
+            f"ngl corrigé à {ngl} car {len(system.gpu)} GPU(s) détecté(s) — "
+            f"ngl=0 est invalide avec un GPU"
+        )
+
     # ── Étape 7 : Estimation vitesse ──
 
     config_params = {
@@ -540,6 +551,20 @@ def suggest(
     }
 
     speed_estimate = estimate_speed(model_meta, strategy, config_params, gpu, system=system)
+
+    # ── Log de la configuration calculée ──
+
+    gpu_info = "aucun GPU"
+    if gpu:
+        gpu_info = f"{gpu.name} (VRAM libre: {gpu.vram_free_gb} Go)"
+    logger.info(
+        f"Configuration suggérée : stratégie={strategy}, ngl={ngl}, "
+        f"quant={best_quant}, ctx={ctx_size}, threads={threads}, "
+        f"GPU={gpu_info}"
+    )
+    logger.info(f"Stratégie: {strategy}, ngl={ngl}, GPUs={len(system.gpu)}")
+    if ngl == 0:
+        logger.warning("ngl=0 → mode CPU uniquement. Vérifiez la détection GPU.")
 
     # ── Assembler la réponse ──
 

@@ -21,6 +21,7 @@ import signal
 import socket
 import time
 import uuid
+from collections import deque
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -42,6 +43,29 @@ def _find_free_port():
 
 # Hôte interne pour llama-server (port déterminé dynamiquement)
 LLAMA_SERVER_HOST = "127.0.0.1"
+
+
+async def _drain_stream(stream, buffer: deque, prefix: str = ""):
+    """Draine un stream en continu pour éviter le deadlock du pipe.
+
+    Lit les lignes du stream une par une et les stocke dans un deque
+    (pour les derniers logs) + les journalise en DEBUG.
+
+    Args:
+        stream: Le stream asyncio (stdout ou stderr du process)
+        buffer: Un deque(maxlen=...) pour stocker les dernières lignes
+        prefix: Préfixe pour les logs (ex: "[llama-server] ")
+    """
+    while True:
+        try:
+            line = await stream.readline()
+        except Exception:
+            break
+        if not line:
+            break
+        decoded = line.decode(errors="replace").rstrip()
+        buffer.append(decoded)
+        logger.debug(f"{prefix}{decoded}")
 
 
 class RunStatus(str, Enum):
@@ -72,6 +96,22 @@ class ServerState:
         self.started_at: Optional[datetime] = None
         self.ended_at: Optional[datetime] = None
         self.error_message: str = ""
+        # Buffers circulaires pour les derniers logs du process
+        self._stderr_lines: deque = deque(maxlen=30)
+        self._stdout_lines: deque = deque(maxlen=30)
+        # Tâches de drain des pipes stdout/stderr
+        self._drain_tasks: list[asyncio.Task] = []
+
+    def cancel_drain_tasks(self):
+        """Annule les tâches de drain des pipes."""
+        for task in self._drain_tasks:
+            if not task.done():
+                task.cancel()
+        self._drain_tasks.clear()
+
+    def recent_stderr(self, n: int = 15) -> str:
+        """Retourne les n dernières lignes de stderr pour le debug."""
+        return "\n".join(list(self._stderr_lines)[-n:])
 
     def to_history(self) -> RunHistory:
         return RunHistory(
@@ -177,6 +217,7 @@ class RunManager:
             layer_gb = model_gb_guess / n_layers_guess
             ngl_safe = max(1, int(vram_guess / layer_gb))
             fallback["ngl"] = ngl_safe
+            logger.info(f"Fallback: ngl_safe={ngl_safe}")
 
             await asyncio.sleep(1)
             state = await self._try_start(model_id, model_path, fallback)
@@ -187,10 +228,20 @@ class RunManager:
                 await asyncio.sleep(1)
                 state = await self._try_start(model_id, model_path, fallback)
 
-            # Dernier recours : CPU only (ngl=0)
+            # Dernier recours : CPU only (ngl=0) — seulement si pas de GPU
             if state.status == RunStatus.ERROR:
-                logger.warning(f"Échec, fallback CPU only")
-                fallback["ngl"] = 0
+                from app.core.system_detector import detect as _detect_system
+                _sys = await _detect_system(force=True)
+                if _sys.gpu:
+                    # GPU disponible : ne pas tomber à ngl=0, garder un minimum
+                    fallback["ngl"] = max(1, ngl_safe // 4)
+                    logger.warning(
+                        f"Échec, mais GPU disponible ({len(_sys.gpu)} GPU(s)) — "
+                        f"ngl maintenu à {fallback['ngl']} au lieu de 0"
+                    )
+                else:
+                    logger.warning("Échec, fallback CPU only")
+                    fallback["ngl"] = 0
                 await asyncio.sleep(1)
                 state = await self._try_start(model_id, model_path, fallback)
 
@@ -236,6 +287,17 @@ class RunManager:
         threads = params.get("threads", 4)
         cmd.extend(["--threads", str(threads)])
 
+        tbatch = params.get("threads_batch")
+        if tbatch:
+            cmd.extend(["--threads-batch", str(tbatch)])
+
+        ubatch = params.get("ubatch_size")
+        if ubatch:
+            cmd.extend(["--ubatch-size", str(ubatch)])
+        batch = params.get("batch_size")
+        if batch:
+            cmd.extend(["--batch-size", str(batch)])
+
         if params.get("flash_attn"):
             val = params["flash_attn"]
             if val is True:
@@ -244,6 +306,10 @@ class RunManager:
             else:
                 cmd.append("--flash-attn")
                 cmd.append(str(val))
+
+        # No KV offload (KV cache reste sur GPU)
+        if params.get("no_kv_offload"):
+            cmd.append("--no-kv-offload")
 
         # Override tensor pour MoE
         for ot in params.get("override_tensor", []):
@@ -264,8 +330,8 @@ class RunManager:
         if params.get("no_warmup"):
             cmd.append("--no-warmup")
 
-        logger.info(f"Démarrage llama-server: {' '.join(cmd[:6])}...")
-        logger.debug(f"Commande complète: {' '.join(cmd)}")
+        logger.info(f"Démarrage llama-server: ngl={ngl}, threads={threads}, ctx={ctx}, model={model_path}")
+        logger.info(f"Commande complète: {' '.join(cmd)}")
 
         try:
             state.process = await asyncio.create_subprocess_exec(
@@ -275,6 +341,21 @@ class RunManager:
                 stderr=asyncio.subprocess.PIPE,
             )
             state.status = RunStatus.RUNNING
+
+            # ── Drainer les pipes stdout/stderr en continu ──
+            # Sans cette étape, le buffer (~64KB) se remplit avec les logs
+            # de llama-server pendant le chargement du modèle, bloque le
+            # process (pipe deadlock), et le health check ne répond jamais.
+            state._drain_tasks.append(
+                asyncio.create_task(
+                    _drain_stream(state.process.stderr, state._stderr_lines, "[llama-server] ")
+                )
+            )
+            state._drain_tasks.append(
+                asyncio.create_task(
+                    _drain_stream(state.process.stdout, state._stdout_lines, "[llama-server/stdout] ")
+                )
+            )
 
             # Attendre que llama-server soit prêt (poll health endpoint)
             await self._wait_for_server_ready(state)
@@ -286,9 +367,11 @@ class RunManager:
             self._monitor_task = asyncio.create_task(self._monitor(state))
 
         except FileNotFoundError:
+            state.cancel_drain_tasks()
             state.status = RunStatus.ERROR
             state.error_message = f"llama-server introuvable: {binary}"
         except Exception as e:
+            state.cancel_drain_tasks()
             state.status = RunStatus.ERROR
             state.error_message = str(e)
             logger.error(f"Erreur lancement llama-server: {e}")
@@ -302,9 +385,8 @@ class RunManager:
             while time.time() - start < timeout:
                 if state.process and state.process.returncode is not None:
                     # Le process est terminé (crash)
-                    stderr = ""
-                    if state.process.stderr:
-                        stderr = (await state.process.stderr.read()).decode(errors="replace")[-500:]
+                    # Utiliser recent_stderr() car le drain task lit déjà stderr
+                    stderr = state.recent_stderr(15)
                     state.status = RunStatus.ERROR
                     state.error_message = f"llama-server crashé: {stderr}"
                     raise RuntimeError(state.error_message)
@@ -317,12 +399,8 @@ class RunManager:
                     pass
                 await asyncio.sleep(1)
         # Timeout : capturer les logs pour le debug
-        stderr = ""
-        if state.process and state.process.stderr:
-            try:
-                stderr = (await state.process.stderr.read()).decode(errors="replace")[-500:]
-            except Exception:
-                pass
+        # Utiliser recent_stderr() car le drain task lit déjà stderr
+        stderr = state.recent_stderr(15)
         state.status = RunStatus.ERROR
         state.error_message = f"Timeout ({timeout}s): llama-server n'a pas démarré. Logs: {stderr}"
         raise RuntimeError(state.error_message)
