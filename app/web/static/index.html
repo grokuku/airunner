@@ -41,13 +41,19 @@
         <span class="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">AI Runner</span>
         <span id="gpuIndicator" class="text-xs px-2 py-0.5 rounded-full bg-dark-600 text-gray-400">CPU</span>
       </div>
-      <div class="flex gap-1">
+      <div class="flex gap-1 items-center">
         <button onclick="navigate('dashboard')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="dashboard">Dashboard</button>
         <button onclick="navigate('models')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="models">Modèles</button>
         <button onclick="navigate('config')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="config">Config</button>
         
         <button onclick="navigate('terminal')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="terminal">💬 Chat</button>
         <button onclick="navigate('benchmark')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="benchmark">📊 Benchmark</button>
+        <button onclick="navigate('settings')" class="nav-btn px-3 py-1.5 rounded text-sm hover:bg-dark-600 transition" data-page="settings">⚙️ Settings</button>
+
+        <!-- Indicateur d'auth -->
+        <span id="authIndicator"
+          class="ml-2 text-base cursor-default select-none"
+          title="Aucun token — auth désactivée">🔒</span>
       </div>
     </div>
   </nav>
@@ -59,14 +65,17 @@
     <div id="page-config" class="page-section hidden"></div>
     <div id="page-terminal" class="page-section hidden"></div>
     <div id="page-benchmark" class="page-section hidden"></div>
+    <div id="page-settings" class="page-section hidden"></div>
   </main>
 
+  <script src="/static/js/auth.js"></script>
   <script src="/static/js/api.js"></script>
   <script src="/static/js/dashboard.js"></script>
   <script src="/static/js/models.js"></script>
   <script src="/static/js/config.js"></script>
   <script src="/static/js/terminal.js"></script>
   <script src="/static/js/benchmark.js"></script>
+  <script src="/static/js/settings.js"></script>
   <script>
     // Navigation SPA
     function navigate(page) {
@@ -85,6 +94,7 @@
       if (page === 'config') renderConfig();
       if (page === 'terminal') renderTerminal();
       if (page === 'benchmark') renderBenchmark();
+      if (page === 'settings') renderSettings();
     }
 
     // Démarrer sur le dashboard

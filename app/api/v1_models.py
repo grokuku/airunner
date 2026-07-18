@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app.core.gguf_parser import parse_gguf_header, metadata_to_model_meta
 from app.core import config as app_config
 from app.core.run_manager import get_run_manager
+from app.core.security import validate_path_param, validate_filepath
 from app.models import HfDownloadRequest, ModelMeta
 
 logger = logging.getLogger("ai-runner")
@@ -147,7 +148,7 @@ async def hf_download(request: HfDownloadRequest):
     from app.core.huggingface_client import download_gguf
 
     models_dir = _get_models_dir()
-    destination = os.path.join(models_dir, request.filename)
+    destination = str(validate_filepath(models_dir, request.filename))
 
     async def event_stream():
         async for event in download_gguf(
@@ -172,6 +173,14 @@ async def hf_probe(repo_id: str):
     Télécharge les premiers Mo du GGUF pour analyser
     l'architecture (MoE/dense, nb paramètres, etc.) sans tout télécharger.
     """
+    # Validation: repo_id peut contenir '/' (ex: "Qwen/Qwen2.5-7B")
+    # mais on rejette '..' et '\\' pour empêcher le path traversal
+    if ".." in repo_id or "\\" in repo_id or "\x00" in repo_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid parameter: path traversal detected",
+        )
+
     from app.core.huggingface_client import get_model_files, probe_remote_gguf
 
     files = await get_model_files(repo_id)
@@ -216,6 +225,7 @@ async def get_model(model_id: str):
 
     Le modèle est parsé à la volée depuis son fichier GGUF.
     """
+    model_id = validate_path_param(model_id)
     models_dir = _get_models_dir()
     # Chercher par ID exact
     filepath = os.path.join(models_dir, f"{model_id}.gguf")
@@ -243,6 +253,7 @@ async def get_model(model_id: str):
 @router.delete("/models/{model_id}")
 async def delete_model(model_id: str):
     """Supprime un modèle GGUF du disque."""
+    model_id = validate_path_param(model_id)
     models_dir = _get_models_dir()
     filepath = os.path.join(models_dir, f"{model_id}.gguf")
 
@@ -262,6 +273,7 @@ async def analyze_model(model_id: str):
     Retourne les métadonnées GGUF complètes, pas seulement le ModelMeta.
     Utile pour le débogage et l'exploration.
     """
+    model_id = validate_path_param(model_id)
     models_dir = _get_models_dir()
     filepath = os.path.join(models_dir, f"{model_id}.gguf")
 

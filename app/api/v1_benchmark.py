@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from app.core.benchmark_runner import run_benchmark
 from app.core.gguf_parser import parse_gguf_header, metadata_to_model_meta
 from app.core import config as app_config
+from app.core.security import validate_path_param, validate_filepath
 from app.core.system_detector import detect
 
 logger = logging.getLogger("ai-runner")
@@ -41,6 +42,9 @@ async def benchmark_auto(
     Retourne un SSE stream avec progression en temps réel.
     """
     global _last_benchmark_results, _last_benchmark_best
+
+    # Valider model_id (anti path traversal)
+    model_id = validate_path_param(model_id)
 
     # Trouver le fichier modèle
     models_dir = app_config.config.storage.models_dir
@@ -119,6 +123,10 @@ async def save_benchmark_preset(
     """Sauvegarde la meilleure config du dernier benchmark comme preset YAML."""
     global _last_benchmark_best
 
+    # Valider les paramètres (anti path traversal)
+    model_id = validate_path_param(model_id)
+    label = validate_path_param(label)
+
     if not _last_benchmark_best:
         raise HTTPException(status_code=400, detail="Aucun benchmark à sauvegarder")
 
@@ -132,7 +140,7 @@ async def save_benchmark_preset(
     # Écrire le fichier preset
     presets_dir = app_config.config.storage.presets_dir
     os.makedirs(presets_dir, exist_ok=True)
-    preset_path = os.path.join(presets_dir, f"{model_id}-{label}.json")
+    preset_path = str(validate_filepath(presets_dir, f"{model_id}-{label}.json"))
 
     with open(preset_path, "w") as f:
         json.dump(preset, f, indent=2)

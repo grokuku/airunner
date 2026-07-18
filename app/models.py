@@ -75,6 +75,23 @@ class HfDownloadRequest(BaseModel):
 
 # ─── Config & Rules ────────────────────────────────────
 
+class ServerConfigResponse(BaseModel):
+    """Current server configuration (auth token masked)."""
+    host: str
+    port: int
+    auth_token: str  # masked
+    cors_origins: list[str]
+
+
+class ServerConfigUpdate(BaseModel):
+    """Partial update of server configuration.
+
+    All fields are optional; only provided fields are updated.
+    """
+    cors_origins: Optional[list[str]] = None
+    auth_token: Optional[str] = None
+
+
 class ConfigRequest(BaseModel):
     model_id: str
     ctx_size: int = 8192

@@ -8,12 +8,13 @@ Lancement :
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api import v1_system, v1_models, v1_chat, v1_comfy, v1_llamacpp, v1_openai, v1_benchmark, ui
-from app.core.config import AppConfig, config, load_config
+from app.core.auth import verify_token
+from app.core.config import AppConfig, load_config
 
 logger = logging.getLogger("ai-runner")
 
@@ -46,22 +47,30 @@ app = FastAPI(
 )
 
 # CORS — permet au frontend (même depuis un autre port) d'accéder à l'API
+# Les origines autorisées sont lues depuis la config (app/core/config.py).
+# On charge la config ici (avant l'ajout du middleware) pour que les
+# origines reflètent config.yaml dès le démarrage.
+_loaded = load_config()
+import app.core.config as cfg_module
+cfg_module.config = _loaded
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_loaded.server.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Inclusion des routeurs API
-app.include_router(v1_system.router, prefix="/api/v1")
-app.include_router(v1_models.router, prefix="/api/v1")
-app.include_router(v1_chat.router, prefix="/api/v1")
-app.include_router(v1_comfy.router, prefix="/api/v1")
-app.include_router(v1_llamacpp.router, prefix="/api/v1")
-app.include_router(v1_benchmark.router, prefix="/api/v1")
-app.include_router(v1_openai.router)  # Pas de prefix : /v1/...
+# Inclusion des routeurs API (avec authentification)
+_auth_deps = [Depends(verify_token)]
+
+app.include_router(v1_system.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_models.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_chat.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_comfy.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_llamacpp.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_benchmark.router, prefix="/api/v1", dependencies=_auth_deps)
+app.include_router(v1_openai.router, dependencies=_auth_deps)  # Pas de prefix : /v1/... mais auth activée
 
 # Routes de l'interface web
 app.include_router(ui.router)

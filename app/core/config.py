@@ -15,6 +15,7 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8311
     auth_token: str = ""
+    cors_origins: list[str] = ["http://localhost:8311"]
 
 
 class StorageConfig(BaseModel):
@@ -42,6 +43,9 @@ class AppConfig(BaseModel):
 
 # Instance globale de configuration (initialisée au démarrage de l'app)
 config: AppConfig = AppConfig()
+
+# Chemin du fichier de configuration utilisé au chargement (pour persistance)
+_config_path: Optional[Path] = None
 
 
 def load_config(path: Optional[str] = None) -> AppConfig:
@@ -71,6 +75,8 @@ def load_config(path: Optional[str] = None) -> AppConfig:
 
     for config_path in search_paths:
         if config_path and config_path.exists():
+            global _config_path
+            _config_path = config_path
             with open(config_path) as f:
                 config_data = yaml.safe_load(f) or {}
             break
@@ -83,3 +89,31 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         config_data["huggingface"]["token"] = env_token
 
     return AppConfig(**config_data)
+
+
+def save_config(cfg: AppConfig, path: Optional[str] = None) -> Path:
+    """Persiste la configuration dans un fichier YAML.
+
+    Utilise le chemin explicite passé en paramètre, sinon celui mémorisé
+    lors du dernier `load_config()`, sinon `config/config.yaml` dans le
+    répertoire de l'app.
+    """
+    global _config_path
+
+    if path:
+        target = Path(path)
+    elif _config_path:
+        target = _config_path
+    else:
+        app_dir = Path(__file__).resolve().parent.parent.parent
+        target = app_dir / "config" / "config.yaml"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # On dump le modèle en mode dict natif pour un YAML lisible
+    data = cfg.model_dump()
+    with open(target, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+    _config_path = target
+    return target

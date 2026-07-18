@@ -5,6 +5,9 @@ server:
   host: "0.0.0.0"
   port: 8311
   # auth_token: "mon-token-secret"  # Optionnel, Bearer token pour API
+  cors_origins:
+    - "http://localhost:8311"
+    # - "https://mon-domaine.com"
 
 storage:
   models_dir: "/app/models"

@@ -4,7 +4,10 @@ const API = '/api/v1';
 // ─── Utils ───────────────────────────────────────────
 
 async function apiGet(path) {
-  const resp = await fetch(`${API}${path}`);
+  const resp = await fetch(`${API}${path}`, {
+    headers: withAuthHeaders(),
+  });
+  if (resp.status === 401) handle401();
   if (!resp.ok) throw new Error(`GET ${path}: ${resp.status} ${resp.statusText}`);
   return resp.json();
 }
@@ -12,9 +15,10 @@ async function apiGet(path) {
 async function apiPost(path, body = {}) {
   const resp = await fetch(`${API}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
+  if (resp.status === 401) handle401();
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(err.detail || `POST ${path}: ${resp.status}`);
@@ -22,12 +26,34 @@ async function apiPost(path, body = {}) {
   return resp.json();
 }
 
+async function apiPut(path, body = {}) {
+  const resp = await fetch(`${API}${path}`, {
+    method: 'PUT',
+    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  if (resp.status === 401) handle401();
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || `PUT ${path}: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+async function getServerConfig() { return apiGet('/config'); }
+async function updateServerConfig(body) { return apiPut('/config', body); }
+
 function apiStream(path, body, onEvent, onDone, onError) {
   fetch(`${API}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   }).then(async (resp) => {
+    if (resp.status === 401) {
+      handle401();
+      onError?.('Authentification requise');
+      return;
+    }
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ detail: resp.statusText }));
       onError?.(err.detail || `Erreur ${resp.status}`);
@@ -65,7 +91,14 @@ async function getModels() { return apiGet('/models'); }
 async function scanModels() { return apiPost('/models/scan'); }
 async function getModel(id) { return apiGet(`/models/${encodeURIComponent(id)}`); }
 async function analyzeModel(id) { return apiPost(`/models/${encodeURIComponent(id)}/analyze`); }
-async function deleteModel(id) { return fetch(`${API}/models/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(r => r.json()); }
+async function deleteModel(id) {
+  const resp = await fetch(`${API}/models/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: withAuthHeaders(),
+  });
+  if (resp.status === 401) handle401();
+  return resp.json();
+}
 async function hfSearch(query) { return apiGet(`/models/hf-search?q=${encodeURIComponent(query)}&page=1`); }
 
 // ─── Config ──────────────────────────────────────────

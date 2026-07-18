@@ -20,6 +20,7 @@ from app.core import config as app_config
 from app.core.gguf_parser import metadata_to_model_meta, parse_gguf_header
 from app.core.rules_engine import suggest
 from app.core.run_manager import RunStatus, get_run_manager
+from app.core.security import validate_path_param
 from app.core.system_detector import detect
 from app.models import ChatRequest, ConfigRequest, ConfigSuggestion
 
@@ -28,6 +29,7 @@ router = APIRouter(tags=["chat"])
 
 
 def _find_model_file(model_id: str) -> str:
+    model_id = validate_path_param(model_id)
     models_dir = app_config.config.storage.models_dir
     filepath = os.path.join(models_dir, f"{model_id}.gguf")
     if os.path.isfile(filepath):
