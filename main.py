@@ -16,6 +16,12 @@ from app.api import v1_system, v1_models, v1_chat, v1_comfy, v1_llamacpp, v1_ope
 from app.core.auth import verify_token
 from app.core.config import AppConfig, load_config
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 logger = logging.getLogger("ai-runner")
 
 
