@@ -179,23 +179,41 @@ class RunManager:
         model_id: str,
         model_path: str,
         params: dict,
+        load_timeout: int = 120,
+        allow_fallback: bool = True,
     ) -> ServerState:
         """Démarre llama-server avec le modèle chargé.
 
         Si le chargement échoue avec des flags multi-GPU (split_mode/tensor_split),
         réessaie automatiquement sans ces flags avec un ngl réduit.
+
+        Args:
+            load_timeout: Timeout (secondes) pour attendre que llama-server
+                soit prêt. Les gros modèles (35B+) peuvent nécessiter 2-3 min.
+            allow_fallback: Si False, n'essaie pas de fallback automatique
+                (utilisé par le benchmark pour tester une config exacte).
         """
         # Si le serveur tourne déjà avec le même modèle, réutiliser
         if (self.server and self.server.status == RunStatus.RUNNING
                 and self.server.model_id == model_id):
             return self.server
 
-        # Arrêter le serveur en cours si nécessaire
+        # Arrêter le serveur en cours si nécessaire (et annuler l'ancien
+        # monitor task pour éviter qu'il continue à poller un serveur mort)
         if self.server and self.server.status in (RunStatus.RUNNING, RunStatus.LOADING):
             await self.stop()
+        else:
+            # Même si le serveur est en erreur, il peut rester un process
+            # zombie (timeout) qu'il faut tuer + annuler le monitor
+            self._cancel_monitor_task()
+            if self.server and self.server.process:
+                await self._kill_process(self.server)
 
         # Tentative initiale
-        state = await self._try_start(model_id, model_path, params)
+        state = await self._try_start(model_id, model_path, params, load_timeout)
+
+        if not allow_fallback:
+            return state
 
         # Si échec (souvent OOM ou conflit tensoriel avec split multi-GPU),
         # réessayer en laissant llama-server gérer la distribution automatiquement
@@ -220,13 +238,13 @@ class RunManager:
             logger.info(f"Fallback: ngl_safe={ngl_safe}")
 
             await asyncio.sleep(1)
-            state = await self._try_start(model_id, model_path, fallback)
+            state = await self._try_start(model_id, model_path, fallback, load_timeout)
 
             # Si toujours en échec, tenter avec ngl/2
             if state.status == RunStatus.ERROR:
                 fallback["ngl"] = max(1, ngl_safe // 2)
                 await asyncio.sleep(1)
-                state = await self._try_start(model_id, model_path, fallback)
+                state = await self._try_start(model_id, model_path, fallback, load_timeout)
 
             # Dernier recours : CPU only (ngl=0) — seulement si pas de GPU
             if state.status == RunStatus.ERROR:
@@ -243,9 +261,40 @@ class RunManager:
                     logger.warning("Échec, fallback CPU only")
                     fallback["ngl"] = 0
                 await asyncio.sleep(1)
-                state = await self._try_start(model_id, model_path, fallback)
+                state = await self._try_start(model_id, model_path, fallback, load_timeout)
 
         return state
+
+    @staticmethod
+    async def _kill_process(state: "ServerState") -> None:
+        """Tue proprement le process llama-server d'un ServerState.
+
+        Utilisé pour nettoyer les processes zombies lorsqu'une tentative
+        de démarrage échoue (timeout/OOM) — sans cela, le process continue
+        à occuper la VRAM et provoque des crashes en cascade sur les
+        configs suivantes.
+        """
+        proc = state.process
+        if proc is None:
+            return
+        try:
+            if proc.returncode is None:
+                proc.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.send_signal(signal.SIGKILL)
+                    await proc.wait()
+        except ProcessLookupError:
+            pass
+        except Exception as e:
+            logger.warning(f"Erreur lors du nettoyage du process: {e}")
+
+    def _cancel_monitor_task(self) -> None:
+        """Annule la tâche de monitoring en arrière-plan si elle existe."""
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            self._monitor_task = None
 
     async def _try_start(
         self,
@@ -417,6 +466,11 @@ class RunManager:
         - {"type": "stats", "vram_gb": X, "ram_gb": Y}
         - {"type": "done", "tokens": N}
         - {"type": "error", "message": "..."}
+
+        Le minuteur de vitesse démarre à l'arrivée du **premier token**,
+        pas au début de la méthode. Cela exclut le temps de traitement
+        du prompt (chargement, pré-fill) et ne mesure que la vitesse
+        d'inférence réelle (génération token par token).
         """
         if not self.server or self.server.status != RunStatus.RUNNING:
             yield f"data: {json.dumps({'type': 'error', 'message': 'llama-server non démarré'})}\n\n"
@@ -433,7 +487,8 @@ class RunManager:
         }
 
         token_count = 0
-        start_time = time.time()
+        # Démarré seulement à l'arrivée du premier token (exclut le pré-fill)
+        first_token_time: Optional[float] = None
 
         try:
             async with httpx.AsyncClient() as client:
@@ -457,8 +512,14 @@ class RunManager:
                             content = delta.get("content", "")
                             if content:
                                 token_count += 1
-                                elapsed = time.time() - start_time
-                                speed = token_count / elapsed if elapsed > 0 else 0
+                                # Démarrer le chrono au premier token
+                                if first_token_time is None:
+                                    first_token_time = time.time()
+                                # Vitesse d'inférence réelle :
+                                # on exclut le premier token du décompte car
+                                # il inclut le temps de pré-fill du prompt.
+                                elapsed = time.time() - first_token_time
+                                speed = (token_count - 1) / elapsed if elapsed > 0 else 0
                                 self.server.tokens_generated = token_count
                                 self.server.speed_tokens_per_sec = speed
                                 yield f"data: {json.dumps({'type': 'token', 'text': content, 'speed': round(speed, 1), 'tokens': token_count})}\n\n"

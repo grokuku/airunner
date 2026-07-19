@@ -16,7 +16,7 @@ import time
 import os
 from typing import AsyncGenerator, Optional
 
-from app.core.run_manager import RunStatus, get_run_manager
+from app.core.run_manager import RunStatus, get_run_manager, _get_resource_usage
 from app.core.system_detector import detect
 from app.core.config import config as app_config
 from app.core.rules_engine import estimate_model_size, estimate_kv_cache_gb, _get_bits_from_quant
@@ -208,6 +208,52 @@ def generate_config_grid(
                 label=f"Multi-GPU {min_gpus + 1}× (+1)",
             ))
 
+    # ── Configurations spécifiques MoE ──
+    # Pour les modèles MoE, on place l'attention sur GPU et les experts
+    # (ffn_gate/down/up) sur CPU, comme rules_engine.py le fait déjà.
+    if model_meta.is_moe:
+        moe_configs_data = [
+            {
+                "label": "MoE: attn GPU, experts CPU",
+                "ngl": 99,
+                "override_tensor": [
+                    ".*attn.*=CUDA0",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
+                ],
+                "cache_type_k": "q8_0",
+                "cache_type_v": "q8_0",
+                "flash_attn": True,
+            },
+            {
+                "label": "MoE: attn GPU, experts CPU • cache Q4",
+                "ngl": 99,
+                "override_tensor": [
+                    ".*attn.*=CUDA0",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
+                ],
+                "cache_type_k": "q4_0",
+                "cache_type_v": "q4_0",
+                "flash_attn": True,
+            },
+        ]
+
+        # Éviter les doublons : une config est identique si elle a le même
+        # ngl, cache_type_k et override_tensor.
+        existing_keys = set()
+        for c in configs:
+            key = (c.get("ngl"), c.get("cache_type_k"), tuple(c.get("override_tensor", [])))
+            existing_keys.add(key)
+
+        for moe_cfg in moe_configs_data:
+            key = (moe_cfg["ngl"], moe_cfg["cache_type_k"], tuple(moe_cfg["override_tensor"]))
+            if key not in existing_keys:
+                configs.append(make_config(**moe_cfg))
+                existing_keys.add(key)
+
     # ── CPU only ──
     configs.append(make_config(
         ngl=0, cache_type_k="q8_0", cache_type_v="q8_0", flash_attn=False,
@@ -282,9 +328,11 @@ async def run_benchmark(
         label = cfg.pop("label", f"Config {idx + 1}")
         estimate_vram = cfg.pop("estimate_vram_gb", None)
 
-        if rm.is_running():
+        # Arrêter le serveur précédent : le port doit être libéré avant
+        # de lancer la configuration suivante.
+        if rm.server is not None:
             await rm.stop()
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
         yield {
             "type": "progress",
@@ -306,10 +354,18 @@ async def run_benchmark(
 
             await asyncio.sleep(1)
 
-            vram_peak = 0.0
-            ram_used = 0.0
+            # Mesurer la VRAM/RAM réelle juste après le chargement du modèle
+            vram_peak, ram_used = await _get_resource_usage()
+            vram_peak = vram_peak or 0.0
+            ram_used = ram_used or 0.0
+            logger.info(
+                f"[{label}] Ressources après chargement — "
+                f"VRAM: {vram_peak} GB, RAM: {ram_used} GB"
+            )
+
             token_count = 0
             start_time = time.time()
+            inference_error: Optional[str] = None
 
             async for event_str in rm.chat(_TEST_MESSAGES, cfg):
                 if event_str.startswith("data: "):
@@ -321,12 +377,39 @@ async def run_benchmark(
                                 vram_peak = max(vram_peak, rm.server.vram_used_gb)
                                 ram_used = max(ram_used, rm.server.ram_used_gb)
                         elif event.get("type") == "error":
-                            logger.warning(f"Erreur test {label}: {event.get('message')}")
+                            inference_error = event.get("message", "Erreur inconnue")
+                            logger.warning(
+                                f"[{label}] Erreur inférence: {inference_error}"
+                            )
                     except (json.JSONDecodeError, KeyError):
                         continue
 
             elapsed = time.time() - start_time
-            tok_s = round(token_count / max(elapsed, 0.1), 1) if token_count > 0 else 0.0
+
+            # Si l'inférence a échoué silencieusement, yield un event d'erreur
+            if inference_error or token_count == 0:
+                err_msg = inference_error or (
+                    "Inférence: 0 token généré (échec silencieux)"
+                )
+                logger.error(f"[{label}] {err_msg}")
+                results.append({
+                    "label": label, "tok_s": 0, "vram_gb": vram_peak,
+                    "ram_gb": ram_used, "error": err_msg[:200],
+                })
+                yield {
+                    "type": "result",
+                    "config": {"label": label, **cfg},
+                    "tok_s": 0,
+                    "vram_gb": vram_peak,
+                    "estimate_vram_gb": estimate_vram,
+                    "ram_gb": ram_used,
+                    "diff_pct": 0,
+                    "score": 0,
+                    "error": err_msg[:200],
+                }
+                continue
+
+            tok_s = round(token_count / max(elapsed, 0.1), 1)
 
             if rm.server:
                 vram_peak = max(vram_peak, rm.server.vram_used_gb)
@@ -354,8 +437,10 @@ async def run_benchmark(
                    "tok_s": 0, "vram_gb": 0, "estimate_vram_gb": estimate_vram,
                    "ram_gb": 0, "diff_pct": 0, "error": str(e)[:200]}
 
-    if rm.is_running():
+    # Arrêter le serveur après le dernier test
+    if rm.server is not None:
         await rm.stop()
+        await asyncio.sleep(2)
 
     best = max(results, key=lambda r: r.get("tok_s", 0))
     if best.get("tok_s", 0) > 0:

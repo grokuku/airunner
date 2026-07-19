@@ -118,7 +118,6 @@ async function sendMessage() {
 
   // UI state
   _isRunning = true;
-  const startTime = Date.now();
   document.getElementById('chatSendBtn').classList.add('hidden');
   document.getElementById('chatStopBtn').classList.remove('hidden');
   document.getElementById('chatStats').classList.remove('hidden');
@@ -129,6 +128,8 @@ async function sendMessage() {
 
   let fullResponse = '';
   let tokenCount = 0;
+  // Démarré seulement à l'arrivée du premier token (exclut le temps de chargement)
+  let firstTokenTime = null;
 
   chatStream(modelId, _chatMessages, { temp, max_tokens: maxTokens, ctx_size: ctxSize },
     (event) => {
@@ -139,8 +140,12 @@ async function sendMessage() {
           assistantDiv.scrollIntoView({ behavior: 'smooth' });
         }
         tokenCount++;
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        document.getElementById('chatStatsSpeed').textContent = `⚡ ${event.speed || '?'} tok/s`;
+        // Démarrer le chrono au premier token pour exclure le temps de chargement
+        if (firstTokenTime === null) {
+          firstTokenTime = Date.now();
+        }
+        const elapsed = ((Date.now() - firstTokenTime) / 1000).toFixed(1);
+        document.getElementById('chatStatsSpeed').textContent = `⚡ ${event.speed || 0} tok/s`;
         document.getElementById('chatStatsTokens').textContent = `📝 ${tokenCount} tokens`;
         document.getElementById('chatStatsTime').textContent = `⏱ ${elapsed}s`;
       } else if (event.type === 'stats') {

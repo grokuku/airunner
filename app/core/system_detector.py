@@ -140,12 +140,12 @@ async def detect_gpu() -> list[GPUInfo]:
         gpus = _parse_gpu_lines(stdout, has_compute_cap=True)
         if gpus:
             for g in gpus:
-                logger.info(
+                logger.debug(
                     f"GPU détecté : {g.name} — "
                     f"VRAM {g.vram_total_gb} Go (libre: {g.vram_free_gb} Go), "
                     f"compute_cap={g.compute_cap or 'N/A'}, driver={g.driver}"
                 )
-            logger.info(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
+            logger.debug(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
             return gpus
         else:
             logger.warning("nvidia-smi a réussi mais aucun GPU n'a été parsé")
@@ -171,12 +171,12 @@ async def detect_gpu() -> list[GPUInfo]:
     if stdout2 is not None and rc2 == 0:
         gpus = _parse_gpu_lines(stdout2, has_compute_cap=False)
         for g in gpus:
-            logger.info(
+            logger.debug(
                 f"GPU détecté : {g.name} — "
                 f"VRAM {g.vram_total_gb} Go (libre: {g.vram_free_gb} Go), "
                 f"driver={g.driver}"
             )
-        logger.info(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
+        logger.debug(f"Detection GPU: {len(gpus)} GPU(s) trouvé(s)")
         return gpus
 
     # nvidia-smi indisponible ou aucune GPU
@@ -315,7 +315,7 @@ async def detect(force: bool = False) -> SystemStatus:
 
     mode = "cuda" if gpus else "cpu"
 
-    logger.info(
+    logger.debug(
         f"Détection système : mode={mode}, GPUs={len(gpus)}, "
         f"RAM dispo={ram.available_gb} Go, CPU cores={cpu.cores}"
     )

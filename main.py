@@ -21,6 +21,7 @@ logging.basicConfig(
     format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger("ai-runner")
 
