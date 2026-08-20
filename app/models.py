@@ -97,6 +97,12 @@ class ConfigRequest(BaseModel):
     ctx_size: int = 8192
     quant_preference: Optional[str] = None  # "Q4_K_M", "Q8_0", etc.
     temp: float = 0.7
+    # Préférences de sampling (optionnelles, surchargent les valeurs par défaut)
+    top_k: Optional[int] = None
+    top_p: Optional[float] = None
+    repeat_penalty: Optional[float] = None
+    min_p: Optional[float] = None
+    seed: Optional[int] = None
 
 
 class VramEstimate(BaseModel):
@@ -134,6 +140,19 @@ class Message(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    """Requête de chat.
+
+    Le dict `params` accepte les clés suivantes (toutes optionnelles,
+    surchargent les suggestions du moteur de règles) :
+        - temp (float, défaut 0.7) : température
+        - max_tokens (int, défaut 512) : tokens max à générer
+        - ctx_size (int, défaut 8192) : taille du contexte
+        - top_k (int, défaut 40) : limite aux K tokens les plus probables
+        - top_p (float, défaut 0.9) : nucleus sampling
+        - repeat_penalty (float, défaut 1.1) : pénalité de répétition
+        - min_p (float, défaut 0.05) : probabilité minimale
+        - seed (int, défaut -1) : graine aléatoire (-1 = aléatoire)
+    """
     model_id: str
     messages: list[Message]
     params: dict = {}

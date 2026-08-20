@@ -120,7 +120,7 @@ async def save_benchmark_preset(
     model_id: str = Query(...),
     label: str = Query("optimized"),
 ):
-    """Sauvegarde la meilleure config du dernier benchmark comme preset YAML."""
+    """Sauvegarde la meilleure config du dernier benchmark comme preset JSON."""
     global _last_benchmark_best
 
     # Valider les paramètres (anti path traversal)

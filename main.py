@@ -44,6 +44,15 @@ async def lifespan(app: FastAPI):
         f"modèles: {loaded.storage.models_dir}"
     )
     yield
+    # Cleanup : arrêter llama-server pour libérer la VRAM
+    try:
+        from app.core.run_manager import get_run_manager
+        rm = get_run_manager()
+        if rm.server is not None:
+            logger.info("Arrêt de llama-server...")
+            await rm.stop()
+    except Exception as e:
+        logger.warning(f"Erreur lors du cleanup: {e}")
     logger.info("AI Runner arrêté")
 
 

@@ -232,7 +232,7 @@ def _parse_meminfo_line(content: str, key: str) -> float:
 async def detect_cpu() -> CPUInfo:
     """Détecte le nombre de cœurs, threads et le modèle du CPU."""
     cores = _count_cpu_cores()
-    threads = _count_cpu_threads()
+    threads = await _count_cpu_threads()
     model = _get_cpu_model()
 
     return CPUInfo(cores=cores, threads=threads, model=model)
@@ -252,19 +252,26 @@ def _count_cpu_cores() -> int:
         return 1
 
 
-def _count_cpu_threads() -> int:
+async def _count_cpu_threads() -> int:
     """Compte le nombre de threads (logiques) via nproc."""
     try:
-        proc = subprocess_run("nproc")
-        return int(proc.strip())
+        proc = await asyncio.create_subprocess_exec(
+            "nproc",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode == 0:
+            return int(stdout.decode().strip())
     except Exception:
-        # Fallback: compter les "processor" dans /proc/cpuinfo
-        try:
-            with open("/proc/cpuinfo") as f:
-                content = f.read()
-            return len(re.findall(r"^processor\s+:", content, re.MULTILINE))
-        except FileNotFoundError:
-            return 1
+        pass
+    # Fallback: compter les "processor" dans /proc/cpuinfo
+    try:
+        with open("/proc/cpuinfo") as f:
+            content = f.read()
+        return len(re.findall(r"^processor\s+:", content, re.MULTILINE))
+    except FileNotFoundError:
+        return 1
 
 
 def subprocess_run(cmd: str) -> str:

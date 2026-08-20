@@ -137,8 +137,8 @@ async def _get_resource_usage() -> tuple[float, float]:
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         if proc.returncode == 0:
-            miB = float(stdout.decode().strip().split("\n")[0].strip())
-            vram = round(miB / 1024, 2)
+            lines = stdout.decode().strip().split("\n")
+            vram = round(sum(float(line.strip()) for line in lines if line.strip()) / 1024, 2)
     except Exception:
         pass
     try:
@@ -347,14 +347,11 @@ class RunManager:
         if batch:
             cmd.extend(["--batch-size", str(batch)])
 
+        # --flash-attn est un flag booléen sans argument dans les versions
+        # récentes de llama.cpp. Ajouter "on" faisait que "on" était
+        # interprété comme un argument positionnel invalide.
         if params.get("flash_attn"):
-            val = params["flash_attn"]
-            if val is True:
-                cmd.append("--flash-attn")
-                cmd.append("on")
-            else:
-                cmd.append("--flash-attn")
-                cmd.append(str(val))
+            cmd.append("--flash-attn")
 
         # No KV offload (KV cache reste sur GPU)
         if params.get("no_kv_offload"):
@@ -420,10 +417,18 @@ class RunManager:
             state.status = RunStatus.ERROR
             state.error_message = f"llama-server introuvable: {binary}"
         except Exception as e:
+            # Tuer le process si encore vivant — sans cela, le process
+            # continue à occuper la VRAM et provoque des OOM en cascade.
+            if state.process and state.process.returncode is None:
+                try:
+                    state.process.kill()
+                    await state.process.wait()
+                except Exception:
+                    pass
             state.cancel_drain_tasks()
             state.status = RunStatus.ERROR
             state.error_message = str(e)
-            logger.error(f"Erreur lancement llama-server: {e}")
+            logger.warning(f"Échec démarrage: {e}")
 
         return state
 
@@ -484,6 +489,11 @@ class RunManager:
             "stream": True,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_k": params.get("top_k", 40),
+            "top_p": params.get("top_p", 0.9),
+            "repeat_penalty": params.get("repeat_penalty", 1.1),
+            "min_p": params.get("min_p", 0.05),
+            "seed": params.get("seed", -1),
         }
 
         token_count = 0

@@ -10,7 +10,7 @@ import logging
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.config import config
+from app.core import config as cfg_module
 
 logger = logging.getLogger("ai-runner")
 
@@ -30,7 +30,7 @@ async def verify_token(
       compare avec ``config.server.auth_token``.
     - Si le token ne matche pas → lève ``HTTPException(401)``.
     """
-    expected_token = config.server.auth_token
+    expected_token = cfg_module.config.server.auth_token
 
     # Authentification désactivée : on laisse passer
     if not expected_token:

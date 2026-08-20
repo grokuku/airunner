@@ -68,6 +68,16 @@ async def chat(request: ChatRequest):
     """Inférence sur un modèle via llama-server.
 
     Démarre llama-server si nécessaire, puis proxy la requête.
+
+    Paramètres de sampling acceptés dans params :
+      - top_k (int, défaut 40) : limite aux K tokens les plus probables
+      - top_p (float, défaut 0.9) : nucleus sampling
+      - repeat_penalty (float, défaut 1.1) : pénalité de répétition
+      - min_p (float, défaut 0.05) : probabilité minimale
+      - seed (int, défaut -1) : graine aléatoire (-1 = aléatoire)
+      - temp (float, défaut 0.7) : température
+      - max_tokens (int, défaut 512) : tokens max à générer
+      - ctx_size (int, défaut 8192) : taille du contexte
     """
     filepath = _find_model_file(request.model_id)
 

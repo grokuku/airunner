@@ -8,20 +8,14 @@ from typing import Optional
 from app.core import config as app_config
 
 
-def build_command(
-    model_path: str,
-    params: dict,
-    prompt: Optional[str] = None,
-) -> str:
-    """Construit la commande llama-cli à partir des paramètres.
+def _build_base_command(model_path: str, params: dict) -> list[str]:
+    """Construit la liste d'arguments commune à toutes les commandes.
 
-    Args:
-        model_path: Chemin vers le fichier GGUF
-        params: Dictionnaire de paramètres (sortie du moteur de règles)
-        prompt: Prompt optionnel à passer directement
+    Inclut : binary, -m, -ngl, override-tensor, cache KV, ctx, threads,
+    batch, flash-attn, no-kv-offload, io-uring, temp, multi-GPU.
 
     Returns:
-        Commande shell complète (avec continuation \\n)
+        Liste de parties de commande (avec indentation pour continuation shell).
     """
     binary = app_config.config.llamacpp.binary_path
     parts = [binary]
@@ -64,9 +58,9 @@ def build_command(
     if batch:
         parts.append(f"  --batch-size {batch}")
 
-    # Flash attention
+    # Flash attention (flag booléen sans argument, comme dans run_manager)
     if params.get("flash_attn"):
-        parts.append("  --flash-attn on")
+        parts.append("  --flash-attn")
 
     # No KV offload
     if params.get("no_kv_offload"):
@@ -80,6 +74,23 @@ def build_command(
     temp = params.get("temp", 0.7)
     parts.append(f"  --temp {temp}")
 
+    # Sampling parameters
+    top_k = params.get("top_k")
+    if top_k is not None:
+        parts.append(f"  --top-k {top_k}")
+    top_p = params.get("top_p")
+    if top_p is not None:
+        parts.append(f"  --top-p {top_p}")
+    repeat_penalty = params.get("repeat_penalty")
+    if repeat_penalty is not None:
+        parts.append(f"  --repeat-penalty {repeat_penalty}")
+    min_p = params.get("min_p")
+    if min_p is not None:
+        parts.append(f"  --min-p {min_p}")
+    seed = params.get("seed")
+    if seed is not None and seed != -1:
+        parts.append(f"  --seed {seed}")
+
     # Multi-GPU : split mode, tensor split, main GPU
     split_mode = params.get("split_mode")
     if split_mode and split_mode != "none":
@@ -90,6 +101,26 @@ def build_command(
         mg = params.get("main_gpu")
         if mg is not None and mg != 0:
             parts.append(f"  --main-gpu {mg}")
+
+    return parts
+
+
+def build_command(
+    model_path: str,
+    params: dict,
+    prompt: Optional[str] = None,
+) -> str:
+    """Construit la commande llama-cli à partir des paramètres.
+
+    Args:
+        model_path: Chemin vers le fichier GGUF
+        params: Dictionnaire de paramètres (sortie du moteur de règles)
+        prompt: Prompt optionnel à passer directement
+
+    Returns:
+        Commande shell complète (avec continuation \\n)
+    """
+    parts = _build_base_command(model_path, params)
 
     # Prompt
     if prompt:
@@ -109,60 +140,7 @@ def build_chat_command(
     Les messages sont passés via --prompt avec le template Jinja2
     ou directement en format chat si supporté.
     """
-    binary = app_config.config.llamacpp.binary_path
-    parts = [binary]
-    parts.append(f"  -m {_quote(model_path)}")
-
-    ngl = params.get("ngl")
-    if ngl is not None:
-        parts.append(f"  -ngl {ngl}")
-
-    override_tensor = params.get("override_tensor", [])
-    for ot in override_tensor:
-        parts.append(f'  --override-tensor "{ot}"')
-
-    cache_k = params.get("cache_type_k")
-    if cache_k:
-        parts.append(f"  --cache-type-k {cache_k}")
-        parts.append(f"  --cache-type-v {cache_k}")
-
-    ctx = params.get("ctx_size")
-    if ctx:
-        parts.append(f"  --ctx-size {ctx}")
-
-    threads = params.get("threads")
-    if threads:
-        parts.append(f"  --threads {threads}")
-    tbatch = params.get("threads_batch")
-    if tbatch:
-        parts.append(f"  --threads-batch {tbatch}")
-
-    ubatch = params.get("ubatch_size")
-    if ubatch:
-        parts.append(f"  --ubatch-size {ubatch}")
-    batch = params.get("batch_size")
-    if batch:
-        parts.append(f"  --batch-size {batch}")
-
-    if params.get("flash_attn"):
-        parts.append("  --flash-attn on")
-
-    if params.get("no_kv_offload"):
-        parts.append("  --no-kv-offload")
-
-    temp = params.get("temp", 0.7)
-    parts.append(f"  --temp {temp}")
-
-    # Multi-GPU : split mode, tensor split, main GPU
-    split_mode = params.get("split_mode")
-    if split_mode and split_mode != "none":
-        parts.append(f"  --split-mode {split_mode}")
-        ts = params.get("tensor_split")
-        if ts and __import__("re").match(r"^\d+(,\d+)+$", ts):
-            parts.append(f"  --tensor-split {ts}")
-        mg = params.get("main_gpu")
-        if mg is not None and mg != 0:
-            parts.append(f"  --main-gpu {mg}")
+    parts = _build_base_command(model_path, params)
 
     # Chat mode + Jinja template (support des templates personnalisés GGUF)
     # Pas de --interactive : on veut une réponse unique, pas un prompt interactif

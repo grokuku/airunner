@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core import config as app_config
 from app.core.run_manager import RunStatus, get_run_manager
+from app.core.security import validate_path_param
 
 logger = logging.getLogger("ai-runner")
 router = APIRouter(tags=["openai"])
@@ -65,7 +66,7 @@ async def openai_chat_completions(request: Request):
     """
     body = await request.json()
 
-    model_id = body.get("model", "")
+    model_id = validate_path_param(body.get("model", ""))
     messages = body.get("messages", [])
     stream = body.get("stream", False)
     max_tokens = body.get("max_tokens", 512)
@@ -98,6 +99,11 @@ async def openai_chat_completions(request: Request):
         "temp": temperature,
         "max_tokens": max_tokens,
         "ctx_size": body.get("max_context", 8192),
+        "top_k": body.get("top_k", 40),
+        "top_p": body.get("top_p", 0.9),
+        "repeat_penalty": body.get("repeat_penalty", 1.1),
+        "min_p": body.get("min_p", 0.05),
+        "seed": body.get("seed", -1),
     }
 
     # Trouver le fichier modèle

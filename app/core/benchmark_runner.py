@@ -19,7 +19,7 @@ from typing import AsyncGenerator, Optional
 from app.core.run_manager import RunStatus, get_run_manager, _get_resource_usage
 from app.core.system_detector import detect
 from app.core.config import config as app_config
-from app.core.rules_engine import estimate_model_size, estimate_kv_cache_gb, _get_bits_from_quant
+from app.core.rules_engine import estimate_model_size, estimate_kv_cache_gb, _get_bits_from_quant, MOE_ATTENTION_RATIO
 from app.models import ModelMeta, SystemStatus
 
 logger = logging.getLogger("ai-runner")
@@ -27,7 +27,6 @@ logger = logging.getLogger("ai-runner")
 # Prompt de test standard (longueur fixe pour comparabilité)
 TEST_PROMPT = "Explain the concept of machine learning in detail, including supervised learning, unsupervised learning, and reinforcement learning. Give examples of each."
 TEST_GENERATE_TOKENS = 150
-MAX_TIME_PER_CONFIG = 120
 VRAM_OVERHEAD_GB = 0.3
 
 _TEST_MESSAGES = [
@@ -50,7 +49,7 @@ def _estimate_vram_for_config(
     if model_meta.is_moe:
         # MoE: on considère que les experts sont offloadés sur CPU
         # Seule l'attention reste sur GPU → ~MOE_ATTENTION_RATIO des params
-        params_b = model_meta.params_b * 0.15
+        params_b = model_meta.params_b * MOE_ATTENTION_RATIO
 
     model_gb = estimate_model_size(params_b, bits)
     n_layers = max(model_meta.block_count, 1)
@@ -342,7 +341,9 @@ async def run_benchmark(
         }
 
         try:
-            state = await rm.start_server(model_id, filepath, cfg)
+            # allow_fallback=False : le benchmark doit tester la config exacte
+            # sans que le run_manager ne modifie silencieusement les paramètres.
+            state = await rm.start_server(model_id, filepath, cfg, allow_fallback=False)
 
             if state.status == RunStatus.ERROR:
                 results.append({"label": label, "tok_s": 0, "vram_gb": 0, "ram_gb": 0,
@@ -364,27 +365,32 @@ async def run_benchmark(
             )
 
             token_count = 0
-            start_time = time.time()
+            tok_s = 0
             inference_error: Optional[str] = None
 
+            # Au lieu de calculer tok_s nous-même (token_count / elapsed inclut
+            # le pré-fill), on utilise la vitesse reportée par le backend dans
+            # les events SSE, qui est calculée depuis le premier token.
             async for event_str in rm.chat(_TEST_MESSAGES, cfg):
                 if event_str.startswith("data: "):
                     try:
                         event = json.loads(event_str[6:])
                         if event.get("type") == "token":
                             token_count += 1
+                            tok_s = event.get("speed", tok_s)
                             if rm.server:
                                 vram_peak = max(vram_peak, rm.server.vram_used_gb)
                                 ram_used = max(ram_used, rm.server.ram_used_gb)
+                        elif event.get("type") == "done":
+                            break
                         elif event.get("type") == "error":
                             inference_error = event.get("message", "Erreur inconnue")
                             logger.warning(
                                 f"[{label}] Erreur inférence: {inference_error}"
                             )
+                            break
                     except (json.JSONDecodeError, KeyError):
                         continue
-
-            elapsed = time.time() - start_time
 
             # Si l'inférence a échoué silencieusement, yield un event d'erreur
             if inference_error or token_count == 0:
@@ -409,8 +415,6 @@ async def run_benchmark(
                 }
                 continue
 
-            tok_s = round(token_count / max(elapsed, 0.1), 1)
-
             if rm.server:
                 vram_peak = max(vram_peak, rm.server.vram_used_gb)
                 ram_used = max(ram_used, rm.server.ram_used_gb)
@@ -424,7 +428,7 @@ async def run_benchmark(
             score = compute_score(tok_s, vram_peak, vram_total, priority)
 
             results.append({"label": label, "tok_s": tok_s, "vram_gb": vram_peak,
-                           "ram_gb": ram_used})
+                           "ram_gb": ram_used, "score": score})
 
             yield {"type": "result", "config": {"label": label, **cfg},
                    "tok_s": tok_s, "vram_gb": vram_peak,
@@ -442,8 +446,12 @@ async def run_benchmark(
         await rm.stop()
         await asyncio.sleep(2)
 
-    best = max(results, key=lambda r: r.get("tok_s", 0))
-    if best.get("tok_s", 0) > 0:
+    if not results:
+        yield {"type": "done"}
+        return
+
+    best = max(results, key=lambda r: r.get("score", 0))
+    if best.get("score", 0) > 0:
         yield {"type": "best", "label": best["label"],
                "tok_s": best["tok_s"],
                "vram_gb": best.get("vram_gb", 0),

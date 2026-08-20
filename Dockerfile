@@ -25,8 +25,7 @@ RUN apt-get update && apt-get install -y \
 # Copier l'application
 WORKDIR /app
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt && \
-    pip3 install --no-cache-dir --break-system-packages httpx aiofiles aiosqlite
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY . .
 

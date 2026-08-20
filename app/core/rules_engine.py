@@ -53,9 +53,9 @@ KV_CACHE_OPTIONS = [
 # Overhead fixe estimé (puffers, overhead CUDA, etc.)
 VRAM_OVERHEAD_GB = 0.3
 
-# Ratio attention/experts pour MoE (approximation)
-# ~15% des paramètres pour l'attention dans un MoE typique
-MOE_ATTENTION_RATIO = 0.15
+# Ratio attention/experts pour MoE — doit être cohérent avec gguf_parser.py
+# qui utilise 0.10 pour le calcul d'active_params_b
+MOE_ATTENTION_RATIO = 0.10
 
 
 # ─── Fonctions de calcul ──────────────────────────────
@@ -116,8 +116,17 @@ def estimate_gpu_bandwidth(gpu: GPUInfo) -> float:
     elif "tesla p40" in name or "tesla p100" in name:
         return 250
     else:
-        # Valeur conservative pour GPU inconnu
-        return 200
+        # Estimation depuis la VRAM totale (proxy générique)
+        # La bande passante corrèle avec la VRAM : plus de VRAM = GPU plus haut de gamme
+        vram_gb = gpu.vram_total_gb
+        if vram_gb >= 20:
+            return 800  # RTX 3090/4090 class
+        elif vram_gb >= 12:
+            return 400  # RTX 3060/4070 class
+        elif vram_gb >= 8:
+            return 300  # RTX 3050/4060 class
+        else:
+            return 200  # Bas de gamme / vieux GPU
 
 
 def estimate_speed(
@@ -157,7 +166,7 @@ def estimate_speed(
         params_b = model_meta.active_params_b
         # Facteur correctif pour overhead de calcul
         raw_tps = bandwidth_gbs / (params_b * bytes_per_param)
-        raw_tps *= 0.3  # Facteur d'efficacité réaliste
+        raw_tps *= 0.5  # Facteur d'efficacité réaliste
         return _format_speed(raw_tps)
 
     elif strategy == "moe_offload":
@@ -168,10 +177,14 @@ def estimate_speed(
         bytes_per_param = bits / 8.0
         attention_params = model_meta.active_params_b * MOE_ATTENTION_RATIO
         gpu_tps = bandwidth_gbs / (attention_params * bytes_per_param)
-        gpu_tps *= 0.3
+        gpu_tps *= 0.5
 
-        # CPU: experts
-        cpu_tps = 15  # Estimation conservative ~15 tok/s pour CPU moderne
+        # CPU: experts — la vitesse dépend des params experts actifs et de la bande passante RAM
+        # DDR4-3200 dual channel ≈ 50 GB/s, DDR5 ≈ 80 GB/s. On utilise 50 par défaut.
+        cpu_bandwidth_gbs = 50
+        # Les experts représentent ~90% des params totaux, mais seuls les experts actifs sont lus
+        expert_active_params = model_meta.active_params_b * (1 - MOE_ATTENTION_RATIO)
+        cpu_tps = cpu_bandwidth_gbs / (expert_active_params * bytes_per_param) * 0.5
         raw_tps = min(gpu_tps, cpu_tps)
         return _format_speed(raw_tps)
 
@@ -188,7 +201,7 @@ def estimate_speed(
         gpu_ratio = min(ngl / n_layers, 1.0)
 
         gpu_tps = bandwidth_gbs / (params_b * bytes_per_param * gpu_ratio)
-        gpu_tps *= 0.15  # Pénalité d'offloading
+        gpu_tps *= 0.25  # Pénalité d'offloading
         cpu_tps = 5  # Très lent sur CPU pour dense
 
         raw_tps = gpu_tps if gpu_ratio > 0.5 else cpu_tps
@@ -345,6 +358,7 @@ def suggest(
                     ".*ffn_gate.*=CPU",
                     ".*ffn_down.*=CPU",
                     ".*ffn_up.*=CPU",
+                    ".*mlp.*=CPU",
                 ]
             else:
                 split_mode = "none"
@@ -353,6 +367,7 @@ def suggest(
                     ".*ffn_gate.*=CPU",
                     ".*ffn_down.*=CPU",
                     ".*ffn_up.*=CPU",
+                    ".*mlp.*=CPU",
                 ]
             vram_weights_gb = attention_gb
             ram_weights_gb = experts_gb
@@ -366,7 +381,7 @@ def suggest(
             strategy = "moe_offload"  # Même principe, moins de couches GPU
             n_attn_layers = int(
                 (vram_free * 0.85 - kv_gb - VRAM_OVERHEAD_GB)
-                / (model_gb_final / n_layers)
+                / (attention_gb / n_layers)
             )
             n_attn_layers = max(1, min(n_attn_layers, n_layers))
             ngl = n_attn_layers
@@ -380,11 +395,17 @@ def suggest(
                 split_mode = "layer"
                 override_tensor = [
                     ".*attn.*=GPU",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
                     ".*mlp.*=CPU",
                 ]
             else:
                 override_tensor = [
                     ".*attn.*=CUDA0",
+                    ".*ffn_gate.*=CPU",
+                    ".*ffn_down.*=CPU",
+                    ".*ffn_up.*=CPU",
                     ".*mlp.*=CPU",
                 ]
             vram_weights_gb = (model_gb_final / n_layers) * n_attn_layers
@@ -549,6 +570,15 @@ def suggest(
         "tensor_split": tensor_split,
         "main_gpu": main_gpu,
     }
+
+    # ── Étape 7b : Paramètres de sampling ──
+    # Valeurs par défaut identiques pour toutes les stratégies.
+    # Si l'utilisateur a fourni des préférences dans ConfigRequest, les utiliser.
+    config_params["top_k"] = request.top_k if request and request.top_k else 40
+    config_params["top_p"] = request.top_p if request and request.top_p else 0.9
+    config_params["repeat_penalty"] = request.repeat_penalty if request and request.repeat_penalty else 1.1
+    config_params["min_p"] = request.min_p if request and request.min_p else 0.05
+    config_params["seed"] = request.seed if request and request.seed else -1
 
     speed_estimate = estimate_speed(model_meta, strategy, config_params, gpu, system=system)
 
