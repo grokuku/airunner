@@ -301,6 +301,7 @@ class RunManager:
         model_id: str,
         model_path: str,
         params: dict,
+        load_timeout: int = 120,
     ) -> ServerState:
         """Tente de démarrer llama-server avec les paramètres donnés."""
         binary = self._find_binary()
@@ -404,7 +405,7 @@ class RunManager:
             )
 
             # Attendre que llama-server soit prêt (poll health endpoint)
-            await self._wait_for_server_ready(state)
+            await self._wait_for_server_ready(state, load_timeout)
 
             # Sauvegarder dans l'historique SQLite
             await save_run(state)
