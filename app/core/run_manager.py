@@ -348,11 +348,12 @@ class RunManager:
         if batch:
             cmd.extend(["--batch-size", str(batch)])
 
-        # --flash-attn est un flag booléen sans argument dans les versions
-        # récentes de llama.cpp. Ajouter "on" faisait que "on" était
-        # interprété comme un argument positionnel invalide.
+        # --flash-attn exige une valeur explicite dans les builds récents
+        # de llama.cpp (téléchargés via /api/v1/llamacpp/update) :
+        #   -fa, --flash-attn [on|off|auto]  (default: 'auto')
+        # Sans valeur, llama-server crashe : "expected value for argument".
         if params.get("flash_attn"):
-            cmd.append("--flash-attn")
+            cmd.extend(["--flash-attn", "on"])
 
         # No KV offload (KV cache reste sur GPU)
         if params.get("no_kv_offload"):
@@ -519,6 +520,13 @@ class RunManager:
                             break
                         try:
                             chunk = json.loads(data)
+                            # Détecter les erreurs renvoyées par llama-server dans le stream
+                            if "error" in chunk:
+                                err_detail = chunk["error"]
+                                if isinstance(err_detail, dict):
+                                    err_detail = err_detail.get("message", str(err_detail))
+                                yield f"data: {json.dumps({'type': 'error', 'message': f'llama-server: {err_detail}'})}\n\n"
+                                return
                             delta = chunk.get("choices", [{}])[0].get("delta", {})
                             content = delta.get("content", "")
                             if content:

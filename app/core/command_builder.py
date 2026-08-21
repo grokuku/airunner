@@ -58,9 +58,10 @@ def _build_base_command(model_path: str, params: dict) -> list[str]:
     if batch:
         parts.append(f"  --batch-size {batch}")
 
-    # Flash attention (flag booléen sans argument, comme dans run_manager)
+    # Flash attention (exige une valeur explicite dans les builds récents,
+    # comme dans run_manager)
     if params.get("flash_attn"):
-        parts.append("  --flash-attn")
+        parts.append("  --flash-attn on")
 
     # No KV offload
     if params.get("no_kv_offload"):
