@@ -17,7 +17,7 @@ import os
 from typing import AsyncGenerator, Optional
 
 from app.core.run_manager import RunStatus, get_run_manager, _get_resource_usage
-from app.core.system_detector import detect
+from app.core.system_detector import detect, get_live_snapshot
 from app.core.config import config as app_config
 from app.core.rules_engine import estimate_model_size, estimate_kv_cache_gb, _get_bits_from_quant, MOE_ATTENTION_RATIO
 from app.models import ModelMeta, SystemStatus
@@ -108,6 +108,7 @@ def generate_config_grid(
     ctx_size: int = 8192,
     fixed_cache_type: Optional[str] = None,
     fixed_flash_attn: Optional[bool] = None,
+    force_mtp: bool = False,
 ) -> list[dict]:
     """Génère une grille de configurations à tester.
 
@@ -257,7 +258,7 @@ def generate_config_grid(
                 existing_keys.add(key)
 
     # ── Configurations MTP (si le modèle supporte Multi-Token Prediction) ──
-    if model_meta.mtp:
+    if model_meta.mtp or force_mtp:
         configs.append(make_config(
             ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
             mtp=True, spec_draft_n_max=2, parallel=1,
@@ -308,6 +309,7 @@ async def run_benchmark(
     ctx_size: int = 8192,
     fixed_cache_type: Optional[str] = None,
     fixed_flash_attn: Optional[bool] = None,
+    force_mtp: bool = False,
 ) -> AsyncGenerator[dict, None]:
     """Exécute le benchmark complet et yield les événements SSE.
 
@@ -331,6 +333,7 @@ async def run_benchmark(
         ctx_size=ctx_size,
         fixed_cache_type=fixed_cache_type,
         fixed_flash_attn=fixed_flash_attn,
+        force_mtp=force_mtp,
     )
     total = len(configs)
     yield {"type": "start", "total": total, "model_id": model_id}
@@ -383,11 +386,36 @@ async def run_benchmark(
             token_count = 0
             tok_s = 0
             inference_error: Optional[str] = None
+            last_monitor = 0.0
 
             # Au lieu de calculer tok_s nous-même (token_count / elapsed inclut
             # le pré-fill), on utilise la vitesse reportée par le backend dans
             # les events SSE, qui est calculée depuis le premier token.
             async for event_str in rm.chat(_TEST_MESSAGES, cfg):
+                # Monitoring temps réel ~1x par seconde pendant l'inférence
+                now = time.monotonic()
+                if now - last_monitor >= 1.0:
+                    try:
+                        snapshot = await get_live_snapshot()
+                    except Exception as e:
+                        logger.warning(f"[monitor] snapshot échoué: {e}")
+                        snapshot = {}
+                    yield {
+                        "type": "monitor",
+                        **snapshot,
+                        "config": {
+                            "ngl": cfg.get("ngl"),
+                            "cache_type_k": cfg.get("cache_type_k"),
+                            "no_kv_offload": cfg.get("no_kv_offload"),
+                            "split_mode": cfg.get("split_mode"),
+                            "tensor_split": cfg.get("tensor_split"),
+                            "override_tensor": cfg.get("override_tensor", []),
+                            "mtp": cfg.get("mtp", False),
+                            "label": label,
+                        },
+                    }
+                    last_monitor = now
+
                 if event_str.startswith("data: "):
                     try:
                         event = json.loads(event_str[6:])

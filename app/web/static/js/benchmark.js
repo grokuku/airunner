@@ -61,6 +61,13 @@ async function renderBenchmark() {
               <option value="off">📌 Off</option>
             </select>
           </div>
+          <div>
+            <label class="text-xs text-gray-400 mb-1 block" for="benchmarkForceMtp">MTP</label>
+            <label class="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm cursor-pointer select-none" title="Utile si le modèle supporte MTP mais n'est pas détecté automatiquement">
+              <input type="checkbox" id="benchmarkForceMtp" class="accent-blue-500">
+              <span>🔮 Forcer MTP</span>
+            </label>
+          </div>
           <div class="pt-5">
             <button id="benchmarkStartBtn" onclick="startBenchmark()"
                     class="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-dark-600 disabled:cursor-not-allowed rounded-lg font-semibold transition text-sm"
@@ -84,6 +91,53 @@ async function renderBenchmark() {
             <div id="benchmarkProgressBar" class="h-full bg-blue-500 rounded-full progress-bar" style="width:0%"></div>
           </div>
           <div id="benchmarkCurrentConfig" class="mt-2 text-xs text-gray-400"></div>
+        </div>
+      </div>
+
+      <!-- Monitoring temps réel -->
+      <div id="benchmarkMonitor" class="hidden">
+        <div class="bg-dark-800 rounded-xl border border-dark-600 p-4">
+          <div class="flex justify-between items-center mb-3">
+            <h3 class="text-sm font-semibold">📡 Monitoring temps réel</h3>
+            <span class="text-xs text-gray-500" id="benchmarkMonitorTime"></span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- CPU -->
+            <div class="bg-dark-700/30 rounded-lg p-3">
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-xs text-gray-400">🧠 CPU</span>
+                <span class="text-xs font-mono" id="monCpuVal">—</span>
+              </div>
+              <div class="h-2 bg-dark-700 rounded-full overflow-hidden">
+                <div id="monCpuBar" class="h-full bg-blue-500 rounded-full transition-all" style="width:0%"></div>
+              </div>
+            </div>
+            <!-- RAM -->
+            <div class="bg-dark-700/30 rounded-lg p-3">
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-xs text-gray-400">💾 RAM</span>
+                <span class="text-xs font-mono" id="monRamVal">—</span>
+              </div>
+              <div class="h-2 bg-dark-700 rounded-full overflow-hidden">
+                <div id="monRamBar" class="h-full bg-green-500 rounded-full transition-all" style="width:0%"></div>
+              </div>
+            </div>
+            <!-- VRAM par GPU -->
+            <div class="bg-dark-700/30 rounded-lg p-3 md:col-span-2">
+              <div class="flex justify-between items-center mb-2">
+                <span class="text-xs text-gray-400">🎮 VRAM</span>
+                <span class="text-xs font-mono" id="monVramTotal">—</span>
+              </div>
+              <div id="monVramList" class="space-y-2">
+                <div class="text-xs text-gray-500">Aucun GPU détecté</div>
+              </div>
+            </div>
+            <!-- Répartition du modèle -->
+            <div class="md:col-span-2 bg-dark-700/30 rounded-lg p-3">
+              <div class="text-xs text-gray-400 mb-2">⚙️ Répartition du modèle</div>
+              <div id="monConfigInfo" class="text-xs text-gray-300 font-mono space-y-1">—</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -141,6 +195,7 @@ async function startBenchmark() {
   const ctxSize = document.getElementById('benchmarkCtxSize').value;
   const cacheType = document.getElementById('benchmarkCacheType').value;
   const flashAttn = document.getElementById('benchmarkFlashAttn').value;
+  const forceMtp = document.getElementById('benchmarkForceMtp').checked;
   if (!modelId) return flash('❌ Sélectionnez un modèle');
 
   _benchmarkRunning = true;
@@ -153,7 +208,7 @@ async function startBenchmark() {
   document.getElementById('benchmarkSaveBtn').classList.add('hidden');
   document.getElementById('benchmarkResultsBody').innerHTML = '';
 
-  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}`;
+  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}${forceMtp ? '&force_mtp=1' : ''}`;
 
   try {
     const resp = await fetch(url, { method: 'POST' });
@@ -214,6 +269,10 @@ function handleBenchmarkEvent(event) {
       document.getElementById('benchmarkCurrentConfig').textContent = `🔧 ${event.config.label || 'Config ' + event.current}`;
       break;
 
+    case 'monitor':
+      renderBenchmarkMonitor(event);
+      break;
+
     case 'result':
       addBenchmarkResult(event);
       break;
@@ -230,6 +289,67 @@ function handleBenchmarkEvent(event) {
       document.getElementById('benchmarkProgressLabel').textContent = '✅ Terminé';
       break;
   }
+}
+
+function renderBenchmarkMonitor(event) {
+  const mon = document.getElementById('benchmarkMonitor');
+  mon.classList.remove('hidden');
+  document.getElementById('benchmarkMonitorTime').textContent =
+    new Date().toLocaleTimeString();
+
+  // CPU
+  const cpu = event.cpu_pct != null ? Math.max(0, Math.min(event.cpu_pct, 100)) : 0;
+  document.getElementById('monCpuBar').style.width = cpu + '%';
+  document.getElementById('monCpuVal').textContent = cpu.toFixed(1) + '%';
+
+  // RAM
+  const ramUsed = event.ram_used_gb || 0;
+  const ramTotal = event.ram_total_gb || 0;
+  const ramPct = ramTotal > 0 ? Math.min((ramUsed / ramTotal) * 100, 100) : 0;
+  document.getElementById('monRamBar').style.width = ramPct + '%';
+  document.getElementById('monRamVal').textContent =
+    ramUsed.toFixed(1) + ' / ' + ramTotal.toFixed(1) + ' Go';
+
+  // VRAM par GPU
+  const gpus = event.gpus || [];
+  const vramList = document.getElementById('monVramList');
+  if (gpus.length === 0) {
+    vramList.innerHTML = '<div class="text-xs text-gray-500">Aucun GPU détecté</div>';
+  } else {
+    vramList.innerHTML = gpus.map(g => {
+      const total = g.vram_total_gb || 0;
+      const used = g.vram_used_gb || 0;
+      const pct = total > 0 ? Math.min((used / total) * 100, 100) : 0;
+      const color = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-purple-500';
+      return `
+        <div>
+          <div class="flex justify-between items-center mb-1 text-xs">
+            <span class="text-gray-400">${g.name || 'GPU ' + g.index} <span class="text-gray-600">#${g.index}</span></span>
+            <span class="font-mono">${used.toFixed(1)} / ${total.toFixed(1)} Go</span>
+          </div>
+          <div class="h-2 bg-dark-700 rounded-full overflow-hidden">
+            <div class="h-full ${color} rounded-full transition-all" style="width:${pct}%"></div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  document.getElementById('monVramTotal').textContent =
+    'Total : ' + (event.vram_used_total_gb || 0).toFixed(1) + ' Go';
+
+  // Répartition du modèle
+  const cfg = event.config || {};
+  const parts = [];
+  parts.push('ngl: ' + (cfg.ngl != null ? cfg.ngl : '—'));
+  parts.push('cache KV: ' + (cfg.cache_type_k || '—'));
+  if (cfg.no_kv_offload) parts.push('no_kv_offload: on');
+  if (cfg.split_mode) parts.push('split: ' + cfg.split_mode + (cfg.tensor_split ? ' [' + cfg.tensor_split + ']' : ''));
+  parts.push('MTP: ' + (cfg.mtp ? 'on' : 'off'));
+  let html = parts.map(p => `<div>• ${p}</div>`).join('');
+  if (Array.isArray(cfg.override_tensor) && cfg.override_tensor.length > 0) {
+    html += '<div class="pt-1 text-gray-400">override_tensor:</div>' +
+      cfg.override_tensor.map(t => `<div class="pl-3 text-gray-500">• ${t}</div>`).join('');
+  }
+  document.getElementById('monConfigInfo').innerHTML = html;
 }
 
 function addBenchmarkResult(event) {

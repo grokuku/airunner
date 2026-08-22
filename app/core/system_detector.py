@@ -296,6 +296,86 @@ def _get_cpu_model() -> str:
     return ""
 
 
+# ─── Snapshot temps réel (CPU% / RAM / VRAM par GPU) ────────
+
+
+def _read_proc_stat() -> tuple[float, float]:
+    """Lit /proc/stat et retourne (total, idle) des temps CPU agrégés.
+
+    total = somme de tous les champs CPU (user, nice, system, idle, iowait,
+    irq, softirq, steal, guest, guest_nice). idle = idle + iowait (le temps
+    pendant lequel le CPU n'a rien fait d'utile).
+    Retourne (0, 0) si le fichier est inaccessible.
+    """
+    try:
+        with open("/proc/stat") as f:
+            first = f.readline()
+        if not first.startswith("cpu"):
+            return 0.0, 0.0
+        parts = first.split()
+        # parts[0] == "cpu"
+        values = [float(v) for v in parts[1:]]
+        if not values:
+            return 0.0, 0.0
+        idle = values[3]  # 'idle' field
+        iowait = values[4] if len(values) > 4 else 0.0
+        total = sum(values)
+        return total, idle + iowait
+    except (FileNotFoundError, ValueError, IndexError):
+        return 0.0, 0.0
+
+
+async def _measure_cpu_percent() -> float:
+    """Mesure le pourcentage d'utilisation CPU global (Linux, /proc/stat).
+
+    Lit /proc/stat deux fois avec un court délai (~100ms) et calcule le
+    delta. Retourne 0.0 si le fichier est inaccessible.
+    """
+    total1, idle1 = _read_proc_stat()
+    if total1 <= 0:
+        return 0.0
+
+    await asyncio.sleep(0.1)
+
+    total2, idle2 = _read_proc_stat()
+    if total2 <= total1:
+        return 0.0
+
+    total_delta = total2 - total1
+    idle_delta = idle2 - idle1
+    if total_delta <= 0:
+        return 0.0
+
+    busy = total_delta - idle_delta
+    return round(max(min(busy / total_delta * 100.0, 100.0), 0.0), 1)
+
+
+async def get_live_snapshot() -> dict:
+    """Snapshot temps réel : CPU%, RAM, VRAM par GPU.
+
+    Utilisé pour le monitoring live du benchmark. detect_gpu() est appelé
+    frais (pas de cache) pour refléter l'état courant de chaque GPU.
+    """
+    gpus = await detect_gpu()  # frais, per-GPU
+    ram = await detect_ram()
+    cpu_pct = await _measure_cpu_percent()
+    return {
+        "cpu_pct": cpu_pct,
+        "ram_used_gb": round(ram.total_gb - ram.free_gb, 2),
+        "ram_total_gb": ram.total_gb,
+        "gpus": [
+            {
+                "index": g.index,
+                "name": g.name,
+                "vram_used_gb": g.vram_used_gb,
+                "vram_total_gb": g.vram_total_gb,
+            }
+            for g in gpus
+        ],
+        "vram_used_total_gb": round(sum(g.vram_used_gb for g in gpus), 2),
+    }
+
+
 # ─── Aggregateur ────────────────────────────────────────
 
 
