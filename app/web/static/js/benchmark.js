@@ -34,12 +34,15 @@ async function renderBenchmark() {
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Contexte</label>
             <select id="benchmarkCtxSize" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+              <option value="0" selected>♾️ Max (natif du modèle)</option>
               <option value="2048">2 048</option>
               <option value="4096">4 096</option>
-              <option value="8192" selected>8 192</option>
+              <option value="8192">8 192</option>
               <option value="16384">16 384</option>
               <option value="32768">32 768</option>
               <option value="65536">65 536</option>
+              <option value="131072">131 072</option>
+              <option value="262144">262 144</option>
             </select>
           </div>
           <div>

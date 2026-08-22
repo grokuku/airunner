@@ -112,7 +112,10 @@ def generate_config_grid(
     """Génère une grille de configurations à tester.
 
     Args:
-        ctx_size: Taille du contexte (KV cache)
+        ctx_size: Taille du contexte (KV cache). Peut être grand — jusqu'au max natif
+            du modèle voire plus. Si le KV cache ne tient plus sur GPU, llama.cpp
+            déborde en RAM (spill) : c'est le comportement voulu pour tester le vrai
+            max au lieu de s'arrêter à l'estimation VRAM du moteur de règles.
         fixed_cache_type: "q8_0", "q4_0", ou None pour tester les deux
         fixed_flash_attn: True, False, ou None pour tester les deux
 
@@ -191,7 +194,7 @@ def generate_config_grid(
         ts = ",".join(str(max(1, int(r / total_r * 10))) for r in ratios)
         configs.append(make_config(
             ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
-            no_kv_offload=True, split_mode="layer", tensor_split=ts, main_gpu=0,
+            split_mode="layer", tensor_split=ts, main_gpu=0,
             label=f"Multi-GPU {min_gpus}× (min)",
         ))
 
@@ -203,7 +206,7 @@ def generate_config_grid(
             extra_ts = ",".join(str(max(1, int(r / extra_t * 10))) for r in extra_r)
             configs.append(make_config(
                 ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
-                no_kv_offload=True, split_mode="layer", tensor_split=extra_ts, main_gpu=0,
+                split_mode="layer", tensor_split=extra_ts, main_gpu=0,
                 label=f"Multi-GPU {min_gpus + 1}× (+1)",
             ))
 
@@ -252,6 +255,19 @@ def generate_config_grid(
             if key not in existing_keys:
                 configs.append(make_config(**moe_cfg))
                 existing_keys.add(key)
+
+    # ── Configurations MTP (si le modèle supporte Multi-Token Prediction) ──
+    if model_meta.mtp:
+        configs.append(make_config(
+            ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
+            mtp=True, spec_draft_n_max=2, parallel=1,
+            label="Full GPU • MTP",
+        ))
+        configs.append(make_config(
+            ngl=99, cache_type_k="q4_0", cache_type_v="q4_0", flash_attn=True,
+            mtp=True, spec_draft_n_max=2, parallel=1,
+            label="Full GPU • MTP • cache Q4",
+        ))
 
     # ── CPU only ──
     configs.append(make_config(

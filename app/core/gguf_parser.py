@@ -237,6 +237,12 @@ def metadata_to_model_meta(metadata: dict, model_id: Optional[str] = None) -> Mo
 
     params_b = round(param_count / 1_000_000_000, 2) if param_count > 0 else 0.0
 
+    # Détection MTP : présence de têtes de prédiction multi-tokens dans les métadonnées
+    mtp = any(
+        "mtp" in str(k).lower() or "multi_token" in str(k).lower() or "multi-token" in str(k).lower()
+        for k in metadata.keys()
+    )
+
     return ModelMeta(
         id=model_id or name or "",
         path=metadata.get("_filepath", ""),
@@ -254,6 +260,7 @@ def metadata_to_model_meta(metadata: dict, model_id: Optional[str] = None) -> Mo
         context_length=context_length,
         embedding_length=embedding_length,
         head_count=head_count,
+        mtp=mtp,
     )
 
 

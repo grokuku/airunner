@@ -58,6 +58,7 @@ class ModelMeta(BaseModel):
     embedding_length: int = 0
     head_count: int = 0
     loaded: bool = False
+    mtp: bool = False  # Modèle entraîné avec des têtes Multi-Token Prediction (MTP)
 
 
 class HfSearchResult(BaseModel):

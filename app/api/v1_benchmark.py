@@ -30,7 +30,7 @@ _last_benchmark_best: dict = {}
 async def benchmark_auto(
     model_id: str = Query(..., description="ID du modèle à tester"),
     priority: str = Query("speed", description="Critère : 'speed' ou 'quality'"),
-    ctx_size: int = Query(8192, description="Taille du contexte (KV cache)"),
+    ctx_size: int = Query(0, description="Taille du contexte (0 = max natif du modèle)"),
     cache_type: str = Query("auto", description="Cache KV : 'auto', 'q8_0' ou 'q4_0'"),
     flash_attn: str = Query("auto", description="Flash attention : 'auto', 'on' ou 'off'"),
 ):
@@ -69,6 +69,10 @@ async def benchmark_auto(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Erreur parsing GGUF: {e}")
+
+    # ctx_size = 0 → utiliser le contexte natif maximal du modèle
+    if ctx_size <= 0:
+        ctx_size = model_meta.context_length or 32768
 
     # Détection système
     system = await detect()

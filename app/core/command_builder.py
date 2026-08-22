@@ -67,6 +67,14 @@ def _build_base_command(model_path: str, params: dict) -> list[str]:
     if params.get("no_kv_offload"):
         parts.append("  --no-kv-offload")
 
+    # MTP (Multi-Token Prediction) : speculative decoding intégré
+    if params.get("mtp"):
+        parts.append("  --spec-type draft-mtp")
+        parts.append("  --gpu-layers-draft all")
+        draft_n = params.get("spec_draft_n_max", 2)
+        parts.append(f"  --spec-draft-n-max {draft_n}")
+        parts.append("  -np 1")
+
     # IO-uring (automatique si disponible, on l'ajoute seulement si demandé)
     if params.get("io_uring"):
         parts.append("  --io-uring")

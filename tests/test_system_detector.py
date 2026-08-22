@@ -35,8 +35,8 @@ class TestCPU:
         cores = _count_cpu_cores()
         assert cores >= 1, f"Devrait avoir au moins 1 core, eu {cores}"
 
-    def test_count_threads(self):
-        threads = _count_cpu_threads()
+    async def test_count_threads(self):
+        threads = await _count_cpu_threads()
         assert threads >= 1, f"Devrait avoir au moins 1 thread, eu {threads}"
 
     def test_cpu_model(self):

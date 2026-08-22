@@ -580,6 +580,12 @@ def suggest(
     config_params["min_p"] = request.min_p if request and request.min_p else 0.05
     config_params["seed"] = request.seed if request and request.seed else -1
 
+    # MTP : activer la prédiction multi-tokens si le modèle la supporte et est sur GPU
+    if model_meta.mtp and strategy in ("dense_full", "moe_offload"):
+        config_params["mtp"] = True
+        config_params["spec_draft_n_max"] = 2
+        config_params["parallel"] = 1  # MTP impose -np 1 (single slot)
+
     speed_estimate = estimate_speed(model_meta, strategy, config_params, gpu, system=system)
 
     # ── Log de la configuration calculée ──

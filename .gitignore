@@ -1,11 +1,27 @@
 # AI Runner — .gitignore
 
-# ─── Python ───────────────────────────────────────────
+# ─── Virtualenv & environnements ─────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Caches Python ───────────────────────────────────
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# ─── Packaging / builds ───────────────────────────────
 *.egg-info/
 dist/
 build/
+*.egg
 
 # ─── Volumes (données utilisateur) ──────────────────
 models/

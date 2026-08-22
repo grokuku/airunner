@@ -378,6 +378,14 @@ class RunManager:
         if params.get("no_warmup"):
             cmd.append("--no-warmup")
 
+        # MTP (Multi-Token Prediction) : speculative decoding intégré
+        if params.get("mtp"):
+            cmd.extend(["--spec-type", "draft-mtp"])
+            cmd.extend(["--gpu-layers-draft", "all"])
+            draft_n = params.get("spec_draft_n_max", 2)
+            cmd.extend(["--spec-draft-n-max", str(draft_n)])
+            cmd.extend(["-np", "1"])  # MTP impose un seul slot parallèle
+
         logger.info(f"Démarrage llama-server: ngl={ngl}, threads={threads}, ctx={ctx}, model={model_path}")
         logger.info(f"Commande complète: {' '.join(cmd)}")
 
@@ -508,7 +516,7 @@ class RunManager:
                     "POST",
                     f"http://127.0.0.1:{self.server.port}/v1/chat/completions",
                     json=request_body,
-                    timeout=300,
+                    timeout=httpx.Timeout(connect=30, read=None, write=None, pool=None),
                 ) as resp:
                     resp.raise_for_status()
 
