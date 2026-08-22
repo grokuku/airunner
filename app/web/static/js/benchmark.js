@@ -68,6 +68,13 @@ async function renderBenchmark() {
               <span>🔮 Forcer MTP</span>
             </label>
           </div>
+          <div>
+            <label class="text-xs text-gray-400 mb-1 block" for="benchmarkIncludeCpuOnly">CPU</label>
+            <label class="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm cursor-pointer select-none" title="Benchmark aussi en mode CPU uniquement">
+              <input type="checkbox" id="benchmarkIncludeCpuOnly" class="accent-blue-500" checked>
+              <span>🖥️ In CPU-only</span>
+            </label>
+          </div>
           <div class="pt-5">
             <button id="benchmarkStartBtn" onclick="startBenchmark()"
                     class="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-dark-600 disabled:cursor-not-allowed rounded-lg font-semibold transition text-sm"
@@ -196,6 +203,7 @@ async function startBenchmark() {
   const cacheType = document.getElementById('benchmarkCacheType').value;
   const flashAttn = document.getElementById('benchmarkFlashAttn').value;
   const forceMtp = document.getElementById('benchmarkForceMtp').checked;
+  const includeCpuOnly = document.getElementById('benchmarkIncludeCpuOnly').checked;
   if (!modelId) return flash('❌ Sélectionnez un modèle');
 
   _benchmarkRunning = true;
@@ -208,7 +216,7 @@ async function startBenchmark() {
   document.getElementById('benchmarkSaveBtn').classList.add('hidden');
   document.getElementById('benchmarkResultsBody').innerHTML = '';
 
-  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}${forceMtp ? '&force_mtp=1' : ''}`;
+  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}${forceMtp ? '&force_mtp=1' : ''}${!includeCpuOnly ? '&include_cpu_only=0' : ''}`;
 
   try {
     const resp = await fetch(url, { method: 'POST' });

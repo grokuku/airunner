@@ -109,6 +109,7 @@ def generate_config_grid(
     fixed_cache_type: Optional[str] = None,
     fixed_flash_attn: Optional[bool] = None,
     force_mtp: bool = False,
+    include_cpu_only: bool = True,
 ) -> list[dict]:
     """Génère une grille de configurations à tester.
 
@@ -119,6 +120,7 @@ def generate_config_grid(
             max au lieu de s'arrêter à l'estimation VRAM du moteur de règles.
         fixed_cache_type: "q8_0", "q4_0", ou None pour tester les deux
         fixed_flash_attn: True, False, ou None pour tester les deux
+        include_cpu_only: Si False, n'ajoute pas la config "CPU only" à la grille.
 
     fixed_* permet à l'utilisateur de réduire les tests en fixant
     certains paramètres (ex: toujours Q4 pour le cache KV).
@@ -271,10 +273,11 @@ def generate_config_grid(
         ))
 
     # ── CPU only ──
-    configs.append(make_config(
-        ngl=0, cache_type_k="q8_0", cache_type_v="q8_0", flash_attn=False,
-        label="CPU only",
-    ))
+    if include_cpu_only:
+        configs.append(make_config(
+            ngl=0, cache_type_k="q8_0", cache_type_v="q8_0", flash_attn=False,
+            label="CPU only",
+        ))
 
     return configs
 
@@ -310,6 +313,7 @@ async def run_benchmark(
     fixed_cache_type: Optional[str] = None,
     fixed_flash_attn: Optional[bool] = None,
     force_mtp: bool = False,
+    include_cpu_only: bool = True,
 ) -> AsyncGenerator[dict, None]:
     """Exécute le benchmark complet et yield les événements SSE.
 
@@ -334,6 +338,7 @@ async def run_benchmark(
         fixed_cache_type=fixed_cache_type,
         fixed_flash_attn=fixed_flash_attn,
         force_mtp=force_mtp,
+        include_cpu_only=include_cpu_only,
     )
     total = len(configs)
     yield {"type": "start", "total": total, "model_id": model_id}
