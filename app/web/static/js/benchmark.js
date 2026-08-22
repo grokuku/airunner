@@ -33,17 +33,22 @@ async function renderBenchmark() {
           </div>
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Contexte</label>
-            <select id="benchmarkCtxSize" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
-              <option value="0" selected>♾️ Max (natif du modèle)</option>
-              <option value="2048">2 048</option>
-              <option value="4096">4 096</option>
-              <option value="8192">8 192</option>
-              <option value="16384">16 384</option>
-              <option value="32768">32 768</option>
-              <option value="65536">65 536</option>
-              <option value="131072">131 072</option>
-              <option value="262144">262 144</option>
-            </select>
+            <input type="text" id="benchmarkCtxSize" list="ctxPresets" value="0"
+                   class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm w-full"
+                   placeholder="Contexte (0 = max natif)"
+                   title="Taille du contexte : choisir un préréglage ou saisir une valeur (0 = max natif du modèle)">
+            <datalist id="ctxPresets">
+              <option value="0">Max (natif du modèle)</option>
+              <option value="2048">2048</option>
+              <option value="4096">4096</option>
+              <option value="8192">8192</option>
+              <option value="16384">16384</option>
+              <option value="32768">32768</option>
+              <option value="65536">65536</option>
+              <option value="131072">131072</option>
+              <option value="262144">262144</option>
+              <option value="524288">524288</option>
+            </datalist>
           </div>
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Cache KV</label>
@@ -206,7 +211,8 @@ async function renderBenchmark() {
 async function startBenchmark() {
   const modelId = document.getElementById('benchmarkModel').value;
   const priority = document.getElementById('benchmarkPriority').value;
-  const ctxSize = document.getElementById('benchmarkCtxSize').value;
+  const ctxRaw = document.getElementById('benchmarkCtxSize').value.trim();
+  const ctxSize = ctxRaw === '' || !/^\d+$/.test(ctxRaw) ? '0' : ctxRaw;
   const cacheType = document.getElementById('benchmarkCacheType').value;
   const flashAttn = document.getElementById('benchmarkFlashAttn').value;
   const forceMtp = document.getElementById('benchmarkForceMtp').checked;
