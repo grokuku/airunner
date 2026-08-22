@@ -264,13 +264,14 @@ def generate_config_grid(
         configs.append(make_config(
             ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=True,
             mtp=True, spec_draft_n_max=2, parallel=1,
-            label="Full GPU • MTP",
+            label="Full GPU • MTP • cache " + ("Q8" if ct == "q8_0" else "Q4"),
         ))
-        configs.append(make_config(
-            ngl=99, cache_type_k="q4_0", cache_type_v="q4_0", flash_attn=True,
-            mtp=True, spec_draft_n_max=2, parallel=1,
-            label="Full GPU • MTP • cache Q4",
-        ))
+        if ct != "q4_0":
+            configs.append(make_config(
+                ngl=99, cache_type_k="q4_0", cache_type_v="q4_0", flash_attn=True,
+                mtp=True, spec_draft_n_max=2, parallel=1,
+                label="Full GPU • MTP • cache Q4",
+            ))
 
     # ── CPU only ──
     if include_cpu_only:
