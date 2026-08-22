@@ -176,7 +176,7 @@ def generate_config_grid(
                 label=f"{label_base} • {label_ct} • no flash",
             ))
 
-    # ── Offloading progressif (single GPU, ngl croissant) ──
+    # ── Offloading progressif (GPU, ngl croissant) ──
     ct = cache_types[0]
     for ratio, label_suffix in [(0.25, "¼ GPU"), (0.5, "½ GPU"), (0.75, "¾ GPU"), (1.0, "Tout GPU")]:
         ngl_val = max(1, int(n_layers * ratio))
@@ -314,6 +314,7 @@ async def run_benchmark(
     fixed_flash_attn: Optional[bool] = None,
     force_mtp: bool = False,
     include_cpu_only: bool = True,
+    skip_offload_if_full_gpu: bool = False,
 ) -> AsyncGenerator[dict, None]:
     """Exécute le benchmark complet et yield les événements SSE.
 
@@ -346,10 +347,21 @@ async def run_benchmark(
     results = []
     rm = get_run_manager()
 
+    # Suivi du succès réel du Full GPU : un Full GPU qui a généré des tokens
+    # prouve que le modèle tient entièrement en VRAM. On s'appuie sur les
+    # résultats réels, pas sur l'estimation VRAM (trop imprécise).
+    full_gpu_ok = False
+
     for idx, cfg in enumerate(configs):
         # Extraire les métadonnées avant de pop
         label = cfg.pop("label", f"Config {idx + 1}")
         estimate_vram = cfg.pop("estimate_vram_gb", None)
+
+        # Si on demande de sauter l'offload ET que le Full GPU a déjà réussi
+        # → ignorer cette config d'offload (décision basée sur les résultats réels)
+        if skip_offload_if_full_gpu and full_gpu_ok and label.startswith("Offload"):
+            yield {"type": "skipped", "config": {"label": label}, "reason": "Full GPU fonctionne"}
+            continue
 
         # Arrêter le serveur précédent : le port doit être libéré avant
         # de lancer la configuration suivante.
@@ -483,6 +495,11 @@ async def run_benchmark(
                    "tok_s": tok_s, "vram_gb": vram_peak,
                    "estimate_vram_gb": estimate_vram, "ram_gb": ram_used,
                    "score": score, "diff_pct": diff_pct}
+
+            # Un vrai config Full GPU (ngl=99, pas de split, pas de MoE) qui a
+            # généré des tokens prouve que le full GPU fonctionne.
+            if label.startswith("Full GPU") and tok_s > 0:
+                full_gpu_ok = True
 
         except Exception as e:
             logger.error(f"Erreur benchmark {label}: {e}")

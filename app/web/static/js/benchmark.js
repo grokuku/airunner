@@ -75,6 +75,13 @@ async function renderBenchmark() {
               <span>🖥️ In CPU-only</span>
             </label>
           </div>
+          <div>
+            <label class="text-xs text-gray-400 mb-1 block" for="benchmarkSkipOffload">Offload</label>
+            <label class="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm cursor-pointer select-none" title="Ne pas tester l'offload GPU si le modèle tient entièrement en VRAM">
+              <input type="checkbox" id="benchmarkSkipOffload" class="accent-blue-500">
+              <span>⚡ Skip offload si full GPU</span>
+            </label>
+          </div>
           <div class="pt-5">
             <button id="benchmarkStartBtn" onclick="startBenchmark()"
                     class="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-dark-600 disabled:cursor-not-allowed rounded-lg font-semibold transition text-sm"
@@ -204,6 +211,7 @@ async function startBenchmark() {
   const flashAttn = document.getElementById('benchmarkFlashAttn').value;
   const forceMtp = document.getElementById('benchmarkForceMtp').checked;
   const includeCpuOnly = document.getElementById('benchmarkIncludeCpuOnly').checked;
+  const skipOffload = document.getElementById('benchmarkSkipOffload').checked;
   if (!modelId) return flash('❌ Sélectionnez un modèle');
 
   _benchmarkRunning = true;
@@ -216,7 +224,7 @@ async function startBenchmark() {
   document.getElementById('benchmarkSaveBtn').classList.add('hidden');
   document.getElementById('benchmarkResultsBody').innerHTML = '';
 
-  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}${forceMtp ? '&force_mtp=1' : ''}${!includeCpuOnly ? '&include_cpu_only=0' : ''}`;
+  const url = `/api/v1/benchmark/auto?model_id=${encodeURIComponent(modelId)}&priority=${priority}&ctx_size=${ctxSize}&cache_type=${cacheType}&flash_attn=${flashAttn}${forceMtp ? '&force_mtp=1' : ''}${!includeCpuOnly ? '&include_cpu_only=0' : ''}${skipOffload ? '&skip_offload_if_full_gpu=1' : ''}`;
 
   try {
     const resp = await fetch(url, { method: 'POST' });
@@ -283,6 +291,12 @@ function handleBenchmarkEvent(event) {
 
     case 'result':
       addBenchmarkResult(event);
+      break;
+
+    case 'skipped':
+      // Config d'offload sautée car un Full GPU a déjà réussi
+      document.getElementById('benchmarkCurrentConfig').textContent =
+        `⏭️ Skipped: ${event.config?.label || '—'} (${event.reason || 'Full GPU OK'})`;
       break;
 
     case 'best':

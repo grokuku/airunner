@@ -35,6 +35,7 @@ async def benchmark_auto(
     flash_attn: str = Query("auto", description="Flash attention : 'auto', 'on' ou 'off'"),
     force_mtp: bool = Query(False, description="Forcer le MTP même si non détecté"),
     include_cpu_only: bool = Query(True, description="Inclure la config CPU only dans le benchmark"),
+    skip_offload_if_full_gpu: bool = Query(False, description="Sauter l'offload si le modèle tient en full GPU"),
 ):
     """Lance un benchmark automatique pour un modèle.
 
@@ -92,6 +93,7 @@ async def benchmark_auto(
             fixed_flash_attn={"on": True, "off": False}.get(flash_attn) if flash_attn != "auto" else None,
             force_mtp=force_mtp,
             include_cpu_only=include_cpu_only,
+            skip_offload_if_full_gpu=skip_offload_if_full_gpu,
         ):
             yield f"data: {json.dumps(event)}\n\n"
 
