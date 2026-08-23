@@ -33,12 +33,13 @@ async function renderBenchmark() {
           </div>
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Contexte</label>
-            <input type="text" id="benchmarkCtxSize" list="ctxPresets" value="0"
+            <input type="text" id="benchmarkCtxSize" list="ctxPresets" value="8192"
                    class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm w-full"
                    placeholder="Contexte (0 = max natif)"
                    title="Taille du contexte : choisir un préréglage ou saisir une valeur (0 = max natif du modèle)">
             <datalist id="ctxPresets">
               <option value="0">Max (natif du modèle)</option>
+              <option value="1024">1024</option>
               <option value="2048">2048</option>
               <option value="4096">4096</option>
               <option value="8192">8192</option>
