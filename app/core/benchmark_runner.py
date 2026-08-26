@@ -494,9 +494,20 @@ async def run_benchmark(
 
             # Si l'inférence a échoué silencieusement, yield un event d'erreur
             if inference_error or token_count == 0:
-                err_msg = inference_error or (
-                    "Inférence: 0 token généré (échec silencieux)"
-                )
+                if inference_error:
+                    err_msg = inference_error
+                else:
+                    # Échec silencieux : 0 token sans event d'erreur. La cause
+                    # détaillée (dernières lignes brutes du stream) est journalisée
+                    # par run_manager.chat() en warning. On ajoute aussi les
+                    # derniers logs stderr de llama-server pour un détail exploitable.
+                    stderr = ""
+                    if rm.server is not None:
+                        stderr = rm.server.recent_stderr(15)
+                    detail = "(cause détaillée dans le warning backend [chat])"
+                    if stderr:
+                        detail = f"Derniers logs llama-server:\n{stderr}"
+                    err_msg = f"Inférence: 0 token généré (échec silencieux) — {detail}"
                 logger.error(f"[{label}] {err_msg}")
                 results.append({
                     "label": label, "tok_s": 0, "vram_gb": vram_peak,

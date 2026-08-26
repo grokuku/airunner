@@ -3,6 +3,8 @@
 let _chatModelId = null;
 let _chatMessages = [];
 let _isRunning = false;
+// Config suggérée pour le modèle sélectionné (récupérée via /config/suggest)
+let _chatConfig = null;
 
 async function renderTerminal() {
   const el = document.getElementById('page-terminal');
@@ -21,7 +23,7 @@ async function renderTerminal() {
         <h2 class="text-sm font-semibold text-gray-300">⚙️ Paramètres</h2>
 
         <label class="text-xs text-gray-400">Modèle</label>
-        <select id="chatModelSelect" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
+        <select id="chatModelSelect" onchange="updateChatConfig()" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
           ${models.map(m => `<option value="${m.id}" ${m.id === _chatModelId ? 'selected' : ''}>${m.name || m.id} (${m.params_b}B)</option>`).join('')}
           ${models.length === 0 ? '<option value="">Aucun modèle disponible</option>' : ''}
         </select>
@@ -33,23 +35,8 @@ async function renderTerminal() {
           <span id="chatTempVal" class="text-xs font-mono w-8 text-right">0.7</span>
         </div>
 
-        <label class="text-xs text-gray-400">Max tokens</label>
-        <select id="chatMaxTokens" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
-          <option value="256">256</option>
-          <option value="512" selected>512</option>
-          <option value="1024">1 024</option>
-          <option value="2048">2 048</option>
-          <option value="4096">4 096</option>
-        </select>
-
-        <label class="text-xs text-gray-400">Contexte</label>
-        <select id="chatCtxSize" class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm">
-          <option value="4096">4 096</option>
-          <option value="8192" selected>8 192</option>
-          <option value="16384">16 384</option>
-          <option value="32768">32 768</option>
-          <option value="65536">65 536</option>
-        </select>
+        <!-- Config appliquée (ngl, quant, cache, ctx… dérivée de /config/suggest) -->
+        <div id="chatConfigPanel"></div>
 
         <div class="mt-auto pt-2 border-t border-dark-600 space-y-2">
           <button onclick="clearChat()"
@@ -94,6 +81,63 @@ async function renderTerminal() {
       </div>
     </div>
   `;
+
+  // Charger la config appliquée pour le modèle sélectionné par défaut
+  if (_chatModelId) await updateChatConfig();
+}
+
+// Récupère et affiche la config suggérée pour le modèle sélectionné.
+// Ces valeurs (ngl, quant, cache KV, ctx, threads, flash attn…) sont
+// contrôlées par le backend — les anciens réglages "max tokens" et
+// "contexte" de cette page ont été supprimés car redondants.
+async function updateChatConfig() {
+  const select = document.getElementById('chatModelSelect');
+  const panel = document.getElementById('chatConfigPanel');
+  if (!select || !panel) return;
+
+  const modelId = select.value;
+  if (!modelId) {
+    _chatConfig = null;
+    panel.innerHTML = '';
+    return;
+  }
+
+  panel.innerHTML = '<div class="text-xs text-gray-500 mt-2">⏳ Chargement de la config…</div>';
+
+  try {
+    _chatConfig = await getConfigSuggestion(modelId);
+    const p = _chatConfig.params || {};
+    const rows = [
+      ['Stratégie', _chatConfig.strategy || '?'],
+      ['Quant', p.quant || '?'],
+      ['Contexte', (p.ctx_size || '?') + ' tokens'],
+      ['GPU Layers', p.ngl === 99 ? 'Tout' : (p.ngl ?? 0)],
+      ['Cache KV', p.cache_type_k || '?'],
+      ['Threads', p.threads || '?'],
+      ['Batch', p.batch_size || '?'],
+      ['Flash Attn', p.flash_attn ? '✅' : '❌'],
+      ['Temp', p.temp || '0.7'],
+      ['Est. vitesse', _chatConfig.estimated_speed || '?'],
+    ];
+    panel.innerHTML = `
+      <div class="bg-dark-900 rounded-lg border border-dark-600 p-3">
+        <div class="text-xs font-semibold text-gray-300 mb-2">📋 Config appliquée</div>
+        <div class="space-y-1">
+          ${rows.map(([k, v]) => `
+            <div class="flex justify-between text-xs gap-2">
+              <span class="text-gray-400">${k}</span>
+              <span class="font-mono text-right truncate">${v}</span>
+            </div>`).join('')}
+        </div>
+        ${(_chatConfig.warnings || []).length ? `
+        <div class="mt-2 space-y-1">
+          ${_chatConfig.warnings.map(w => `<div class="text-xs text-yellow-400">⚠️ ${w}</div>`).join('')}
+        </div>` : ''}
+      </div>`;
+  } catch (e) {
+    _chatConfig = null;
+    panel.innerHTML = `<div class="text-xs text-red-400 mt-2">⚠️ Config indisponible : ${e.message}</div>`;
+  }
 }
 
 
@@ -123,15 +167,16 @@ async function sendMessage() {
   document.getElementById('chatStats').classList.remove('hidden');
 
   const temp = parseFloat(document.getElementById('chatTemp').value) || 0.7;
-  const maxTokens = parseInt(document.getElementById('chatMaxTokens').value) || 512;
-  const ctxSize = parseInt(document.getElementById('chatCtxSize').value) || 8192;
+  // Max tokens et contexte sont contrôlés par la config suggérée (plus de
+  // réglages redondants sur cette page). ctx_size vient de /config/suggest.
+  const ctxSize = (_chatConfig && _chatConfig.params && _chatConfig.params.ctx_size) || 8192;
 
   let fullResponse = '';
   let tokenCount = 0;
   // Démarré seulement à l'arrivée du premier token (exclut le temps de chargement)
   let firstTokenTime = null;
 
-  chatStream(modelId, _chatMessages, { temp, max_tokens: maxTokens, ctx_size: ctxSize },
+  chatStream(modelId, _chatMessages, { temp, max_tokens: 512, ctx_size: ctxSize },
     (event) => {
       if (event.type === 'token') {
         fullResponse += event.text + ' ';

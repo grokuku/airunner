@@ -33,7 +33,7 @@ async function renderDashboard() {
       <div class="flex gap-3 flex-wrap">
         <button onclick="navigate('models')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition">📥 Télécharger un modèle</button>
         <button onclick="scanModels().then(() => renderDashboard())" class="px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg text-sm transition">🔄 Scanner les modèles</button>
-        <button onclick="navigate('terminal')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm transition">💬 Ouvrir le terminal</button>
+        <button onclick="navigate('terminal')" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm transition">💬 Ouvrir le chat</button>
         <button onclick="unloadModel().then(r => flash('VRAM libérée'))" class="px-4 py-2 bg-red-800 hover:bg-red-700 rounded-lg text-sm transition">🗑️ Libérer VRAM</button>
       </div>
     `;

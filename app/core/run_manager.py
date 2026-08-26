@@ -531,6 +531,12 @@ class RunManager:
         token_count = 0
         # Démarré seulement à l'arrivée du premier token (exclut le pré-fill)
         first_token_time: Optional[float] = None
+        # Buffer des dernières lignes brutes SSE reçues — même celles ignorées
+        # (non-"data:", chunks vides, [DONE], JSON invalides). Sert au diagnostic
+        # quand l'inférence se termine avec 0 token (échec silencieux).
+        raw_lines = deque(maxlen=10)
+        # True si un event d'erreur a déjà été émis vers l'appelant
+        _yielded_error = False
 
         try:
             async with httpx.AsyncClient() as client:
@@ -543,6 +549,8 @@ class RunManager:
                     resp.raise_for_status()
 
                     async for line in resp.aiter_lines():
+                        # Enregistrer TOUTE ligne brute, même ignorée
+                        raw_lines.append(line)
                         if not line.startswith("data: "):
                             continue
                         data = line[6:]
@@ -552,6 +560,7 @@ class RunManager:
                             chunk = json.loads(data)
                             # Détecter les erreurs renvoyées par llama-server dans le stream
                             if "error" in chunk:
+                                _yielded_error = True
                                 err_detail = chunk["error"]
                                 if isinstance(err_detail, dict):
                                     err_detail = err_detail.get("message", str(err_detail))
@@ -575,11 +584,25 @@ class RunManager:
                         except (json.JSONDecodeError, KeyError, IndexError):
                             continue
 
+            # ── Échec silencieux : 0 token généré sans event d'erreur ──
+            # Le stream s'est terminé proprement (HTTP 200) mais llama-server n'a
+            # rien produit. On journalise les dernières lignes brutes reçues pour
+            # comprendre pourquoi (body d'erreur JSON, stream vide immédiat, etc.).
+            if token_count == 0 and not _yielded_error:
+                logger.warning(
+                    "[chat] Inférence terminée sans token généré (échec silencieux). "
+                    f"Dernières lignes brutes du stream ({len(raw_lines)}):\n"
+                    + "\n".join(raw_lines)
+                )
+
             yield f"data: {json.dumps({'type': 'done', 'tokens': token_count})}\n\n"
 
         except httpx.ConnectError:
+            _yielded_error = True
             yield f"data: {json.dumps({'type': 'error', 'message': 'llama-server injoignable'})}\n\n"
         except Exception as e:
+            _yielded_error = True
+            logger.warning(f"[chat] Erreur pendant l'inférence: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     async def stop(self) -> None:

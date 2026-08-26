@@ -124,8 +124,7 @@ async function renderConfig() {
 
       <!-- Actions ────────────────────────────── -->
       <div class="flex gap-3">
-        <button onclick="launchChat('${modelId}')" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold transition">▶️ Lancer le chat</button>
-        <button onclick="navigate('terminal')" class="px-4 py-3 bg-dark-600 hover:bg-dark-500 rounded-xl text-sm transition">💬 Terminal</button>
+        <button onclick="launchChat('${modelId}')" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-semibold transition">💬 Ouvrir le chat</button>
       </div>
     `;
   } catch (e) {
