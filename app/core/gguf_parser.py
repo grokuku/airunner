@@ -197,7 +197,7 @@ def metadata_to_model_meta(metadata: dict, model_id: Optional[str] = None) -> Mo
     Calcule les valeurs dérivées (MoE, paramètres actifs, etc.).
     """
     architecture = str(metadata.get("general.architecture", ""))
-    name = str(metadata.get("general.name", ""))
+    name = str(metadata.get("general.name", "")).strip()
     file_type = int(metadata.get("general.file_type", 0))
     param_count = int(metadata.get("general.parameter_count", 0))
     block_count = int(metadata.get(architecture + ".block_count", 0))
@@ -210,17 +210,28 @@ def metadata_to_model_meta(metadata: dict, model_id: Optional[str] = None) -> Mo
     # Conversion du file_type en nom de quant lisible
     quant_name = GGUF_FILE_TYPES.get(file_type, f"Unknown({file_type})")
 
+    # Fallback propre du nom : si general.name est vide/absent, on utilise
+    # le nom de fichier (model_id) au lieu d'un nom dérivé peu lisible.
+    if not name and model_id:
+        name = model_id
+
     # Détection MoE
     is_moe = expert_count > 1
 
     # Si param_count est 0 (parfois absent des métadonnées), l'estimer
-    # depuis la taille distante du fichier et le type de quant
+    # depuis la taille du fichier (distante ou locale) et le type de quant.
     if param_count == 0:
-        remote_size = metadata.get("_remote_size", 0)
-        if remote_size > 0:
-            bits_per = _file_type_to_bits(file_type)
-            if bits_per > 0:
+        bits_per = _file_type_to_bits(file_type)
+        if bits_per > 0:
+            # Taille distante (probe HF) si disponible
+            remote_size = metadata.get("_remote_size", 0)
+            # Taille réelle du fichier local (en bytes)
+            file_size = metadata.get("file_size", 0)
+            if remote_size > 0:
                 param_count = int(remote_size * 8 / bits_per)
+            elif file_size > 0:
+                param_count = int(file_size * 8 / bits_per)
+            if param_count > 0:
                 metadata["general.parameter_count"] = param_count
 
     # Calcul des paramètres actifs (pour MoE)

@@ -139,6 +139,14 @@ def generate_config_grid(
         "max_tokens": TEST_GENERATE_TOKENS,
         "no_kv_offload": False,
         "ctx_size": ctx_size,
+        "batch_size": 2048,
+        "ubatch_size": 512,
+        "cont_batching": True,
+        "no_context_shift": True,
+        "jinja": True,
+        "parallel": 1,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
     }
 
     def make_config(**overrides) -> dict:
@@ -175,6 +183,36 @@ def generate_config_grid(
                 ngl=99, cache_type_k=ct, cache_type_v=ct, flash_attn=False,
                 label=f"{label_base} • {label_ct} • no flash",
             ))
+
+    # ── Variations ciblées (batch, cont-batching, threads-batch) ──
+    # Uniquement sur le premier cache_type (q8_0 par défaut) pour ne pas
+    # exploser le nombre de configs : on cherche le meilleur réglage.
+    variation_ct = cache_types[0]
+    if variation_ct == "q8_0":
+        try:
+            cpu_cores = max(system.cpu.cores, 1)
+        except Exception:
+            cpu_cores = 8
+        configs.append(make_config(
+            ngl=99, cache_type_k=variation_ct, cache_type_v=variation_ct,
+            flash_attn=True, batch_size=1024,
+            label="Full GPU • batch 1024",
+        ))
+        configs.append(make_config(
+            ngl=99, cache_type_k=variation_ct, cache_type_v=variation_ct,
+            flash_attn=True, batch_size=4096,
+            label="Full GPU • batch 4096",
+        ))
+        configs.append(make_config(
+            ngl=99, cache_type_k=variation_ct, cache_type_v=variation_ct,
+            flash_attn=True, cont_batching=False,
+            label="Full GPU • no cont-batching",
+        ))
+        configs.append(make_config(
+            ngl=99, cache_type_k=variation_ct, cache_type_v=variation_ct,
+            flash_attn=True, threads_batch=cpu_cores * 2,
+            label="Full GPU • threads-batch 2x",
+        ))
 
     # ── Offloading progressif (GPU, ngl croissant) ──
     ct = cache_types[0]

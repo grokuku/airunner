@@ -104,6 +104,8 @@ class ConfigRequest(BaseModel):
     repeat_penalty: Optional[float] = None
     min_p: Optional[float] = None
     seed: Optional[int] = None
+    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
 
 
 class VramEstimate(BaseModel):

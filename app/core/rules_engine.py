@@ -580,6 +580,14 @@ def suggest(
     config_params["min_p"] = request.min_p if request and request.min_p else 0.05
     config_params["seed"] = request.seed if request and request.seed else -1
 
+    # Pénalités de fréquence/présence + flags de runtime (défauts réalistes)
+    config_params["presence_penalty"] = request.presence_penalty if request and request.presence_penalty is not None else 0.0
+    config_params["frequency_penalty"] = request.frequency_penalty if request and request.frequency_penalty is not None else 0.0
+    config_params["cont_batching"] = True
+    config_params["no_context_shift"] = True
+    config_params["jinja"] = True
+    config_params["parallel"] = 1
+
     # MTP : activer la prédiction multi-tokens si le modèle la supporte et est sur GPU
     if model_meta.mtp and strategy in ("dense_full", "moe_offload"):
         config_params["mtp"] = True

@@ -73,7 +73,27 @@ def _build_base_command(model_path: str, params: dict) -> list[str]:
         parts.append("  --gpu-layers-draft all")
         draft_n = params.get("spec_draft_n_max", 2)
         parts.append(f"  --spec-draft-n-max {draft_n}")
-        parts.append("  -np 1")
+
+    # Parallel slots : 1 par défaut (meilleure perf, requis par MTP)
+    parallel = params.get("parallel", 1)
+    if parallel and parallel != 0:
+        parts.append(f"  -np {parallel}")
+
+    # Continuous batching
+    if params.get("cont_batching"):
+        parts.append("  --cont-batching")
+
+    # No context shift
+    if params.get("no_context_shift"):
+        parts.append("  --no-context-shift")
+
+    # Jinja chat template
+    if params.get("jinja"):
+        parts.append("  --jinja")
+
+    # Alias (nom exposé par llama-server)
+    if params.get("alias"):
+        parts.append(f"  --alias {params['alias']}")
 
     # IO-uring (automatique si disponible, on l'ajoute seulement si demandé)
     if params.get("io_uring"):

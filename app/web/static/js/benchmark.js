@@ -33,23 +33,33 @@ async function renderBenchmark() {
           </div>
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Contexte</label>
-            <input type="text" id="benchmarkCtxSize" list="ctxPresets" value="8192"
-                   class="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm w-full"
-                   placeholder="Contexte (0 = max natif)"
-                   title="Taille du contexte : choisir un préréglage ou saisir une valeur (0 = max natif du modèle)">
-            <datalist id="ctxPresets">
-              <option value="0">Max (natif du modèle)</option>
-              <option value="1024">1024</option>
-              <option value="2048">2048</option>
-              <option value="4096">4096</option>
-              <option value="8192">8192</option>
-              <option value="16384">16384</option>
-              <option value="32768">32768</option>
-              <option value="65536">65536</option>
-              <option value="131072">131072</option>
-              <option value="262144">262144</option>
-              <option value="524288">524288</option>
-            </datalist>
+            <div class="relative">
+              <input type="text" id="benchmarkCtxSize" value="8192"
+                     class="w-full bg-dark-700 border border-dark-600 rounded-lg pl-3 pr-8 py-2 text-sm"
+                     placeholder="Saisir une valeur ou choisir (0 = max natif)"
+                     title="Taille du contexte : choisir un préréglage ou saisir une valeur libre (0 = max natif du modèle)">
+              <button type="button" id="ctxComboToggle"
+                      class="absolute right-0 top-0 h-full px-2 text-gray-400 hover:text-gray-200 flex items-center"
+                      title="Choisir un préréglage" aria-haspopup="listbox" aria-expanded="false">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                </svg>
+              </button>
+              <ul id="ctxComboList" role="listbox"
+                  class="hidden absolute left-0 right-0 z-40 mt-1 bg-dark-700 border border-dark-600 rounded-lg shadow-lg overflow-y-auto max-h-60 text-sm">
+                <li role="option" data-ctx="0" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">0 — Max (natif du modèle)</li>
+                <li role="option" data-ctx="1024" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">1024</li>
+                <li role="option" data-ctx="2048" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">2048</li>
+                <li role="option" data-ctx="4096" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">4096</li>
+                <li role="option" data-ctx="8192" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">8192</li>
+                <li role="option" data-ctx="16384" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">16384</li>
+                <li role="option" data-ctx="32768" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">32768</li>
+                <li role="option" data-ctx="65536" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">65536</li>
+                <li role="option" data-ctx="131072" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">131072</li>
+                <li role="option" data-ctx="262144" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">262144</li>
+                <li role="option" data-ctx="524288" class="px-3 py-2 hover:bg-dark-600 hover:text-white cursor-pointer">524288</li>
+              </ul>
+            </div>
           </div>
           <div>
             <label class="text-xs text-gray-400 mb-1 block">Cache KV</label>
@@ -205,6 +215,62 @@ async function renderBenchmark() {
   `;
 
   loadSavedPresets();
+  initCtxCombobox();
+}
+
+// ─── Combobox de contexte ────────────────────────────
+
+let _ctxComboDocHandler = null;
+
+function initCtxCombobox() {
+  const input = document.getElementById('benchmarkCtxSize');
+  const list = document.getElementById('ctxComboList');
+  const toggle = document.getElementById('ctxComboToggle');
+  if (!input || !list || !toggle) return;
+
+  // Retirer un éventuel handler global précédent pour éviter les doublons
+  if (_ctxComboDocHandler) {
+    document.removeEventListener('click', _ctxComboDocHandler);
+    _ctxComboDocHandler = null;
+  }
+
+  const open = () => {
+    list.classList.remove('hidden');
+    toggle.setAttribute('aria-expanded', 'true');
+  };
+  const close = () => {
+    list.classList.add('hidden');
+    toggle.setAttribute('aria-expanded', 'false');
+  };
+  const toggleOpen = () => (list.classList.contains('hidden') ? open() : close());
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleOpen();
+  });
+
+  // Cliquer dans l'input ouvre la liste (la saisie reste libre)
+  input.addEventListener('click', (e) => {
+    e.stopPropagation();
+    open();
+  });
+  input.addEventListener('focus', open);
+
+  // Toutes les options sont toujours affichées, sans filtrage selon la saisie
+  list.querySelectorAll('li[data-ctx]').forEach((li) => {
+    li.addEventListener('click', (e) => {
+      e.stopPropagation();
+      input.value = li.dataset.ctx;
+      close();
+    });
+  });
+
+  // Fermer en cliquant à l'extérieur du combobox
+  const container = input.closest('.relative');
+  _ctxComboDocHandler = (e) => {
+    if (container && !container.contains(e.target)) close();
+  };
+  document.addEventListener('click', _ctxComboDocHandler);
 }
 
 // ─── Benchmark Runner ──────────────────────────────

@@ -384,7 +384,27 @@ class RunManager:
             cmd.extend(["--gpu-layers-draft", "all"])
             draft_n = params.get("spec_draft_n_max", 2)
             cmd.extend(["--spec-draft-n-max", str(draft_n)])
-            cmd.extend(["-np", "1"])  # MTP impose un seul slot parallèle
+
+        # Parallel slots : 1 par défaut (meilleure perf, requis par MTP)
+        parallel = params.get("parallel", 1)
+        if parallel and parallel != 0:
+            cmd.extend(["-np", str(parallel)])
+
+        # Continuous batching
+        if params.get("cont_batching"):
+            cmd.append("--cont-batching")
+
+        # No context shift
+        if params.get("no_context_shift"):
+            cmd.append("--no-context-shift")
+
+        # Jinja chat template
+        if params.get("jinja"):
+            cmd.append("--jinja")
+
+        # Alias (nom exposé par llama-server)
+        if params.get("alias"):
+            cmd.extend(["--alias", str(params["alias"])])
 
         logger.info(f"Démarrage llama-server: ngl={ngl}, threads={threads}, ctx={ctx}, model={model_path}")
         logger.info(f"Commande complète: {' '.join(cmd)}")
@@ -504,6 +524,8 @@ class RunManager:
             "repeat_penalty": params.get("repeat_penalty", 1.1),
             "min_p": params.get("min_p", 0.05),
             "seed": params.get("seed", -1),
+            "presence_penalty": params.get("presence_penalty", 0.0),
+            "frequency_penalty": params.get("frequency_penalty", 0.0),
         }
 
         token_count = 0
