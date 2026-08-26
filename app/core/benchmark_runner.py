@@ -26,7 +26,7 @@ logger = logging.getLogger("ai-runner")
 
 # Prompt de test standard (longueur fixe pour comparabilité)
 TEST_PROMPT = "Explain the concept of machine learning in detail, including supervised learning, unsupervised learning, and reinforcement learning. Give examples of each."
-TEST_GENERATE_TOKENS = 150
+TEST_GENERATE_TOKENS = 256
 VRAM_OVERHEAD_GB = 0.3
 
 _TEST_MESSAGES = [

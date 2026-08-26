@@ -567,7 +567,8 @@ class RunManager:
                                 yield f"data: {json.dumps({'type': 'error', 'message': f'llama-server: {err_detail}'})}\n\n"
                                 return
                             delta = chunk.get("choices", [{}])[0].get("delta", {})
-                            content = delta.get("content", "")
+                            # Contenu normal OU contenu de raisonnement (modèles reasoning type Qwen3/DeepSeek)
+                            content = delta.get("content", "") or delta.get("reasoning_content", "")
                             if content:
                                 token_count += 1
                                 # Démarrer le chrono au premier token
